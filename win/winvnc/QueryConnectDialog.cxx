@@ -23,10 +23,13 @@
 #include <winvnc/VNCServerWin32.h>
 #include <winvnc/QueryConnectDialog.h>
 #include <winvnc/resource.h>
+
+#include <core/LogWriter.h>
+
 #include <rfb_win32/Win32Util.h>
 #include <rfb_win32/Service.h>
-#include <rfb/LogWriter.h>
 
+using namespace core;
 using namespace rfb;
 using namespace win32;
 using namespace winvnc;
@@ -34,7 +37,7 @@ using namespace winvnc;
 static LogWriter vlog("QueryConnectDialog");
 
 static IntParameter timeout("QueryConnectTimeout",
-                            "Number of seconds to show the Accept Connection dialog before "
+                            "Number of seconds to show the Accept connection dialog before "
                             "rejecting the connection",
                             10);
 
@@ -44,7 +47,7 @@ static IntParameter timeout("QueryConnectTimeout",
 QueryConnectDialog::QueryConnectDialog(network::Socket* sock_,
                                        const char* userName_,
                                        VNCServerWin32* s)
-: Dialog(GetModuleHandle(0)),
+: Dialog(GetModuleHandle(nullptr)),
   sock(sock_), peerIp(sock->getPeerAddress()), userName(userName_),
   approve(false), server(s) {
 }
@@ -60,7 +63,7 @@ void QueryConnectDialog::worker() {
   countdown = timeout;
   try {
     if (desktopChangeRequired() && !changeDesktop())
-      throw rdr::Exception("changeDesktop failed");
+      throw std::runtime_error("changeDesktop failed");
     approve = Dialog::showDialog(MAKEINTRESOURCE(IDD_QUERY_CONNECT));
     server->queryConnectionComplete();
   } catch (...) {
@@ -73,8 +76,8 @@ void QueryConnectDialog::worker() {
 // - Dialog overrides
 
 void QueryConnectDialog::initDialog() {
-  if (!SetTimer(handle, 1, 1000, 0))
-    throw rdr::SystemException("SetTimer", GetLastError());
+  if (!SetTimer(handle, 1, 1000, nullptr))
+    throw core::win32_error("SetTimer", GetLastError());
   setItemString(IDC_QUERY_HOST, peerIp.c_str());
   if (userName.empty())
     userName = "(anonymous)";

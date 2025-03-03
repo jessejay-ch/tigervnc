@@ -24,12 +24,12 @@
 #include <assert.h>
 #include <math.h>
 
-#include <rfb/util.h>
-#include <rfb/LogWriter.h>
+#include <core/LogWriter.h>
+#include <core/time.h>
 
 #include "GestureHandler.h"
 
-static rfb::LogWriter vlog("GestureHandler");
+static core::LogWriter vlog("GestureHandler");
 
 static const unsigned char GH_NOGESTURE = 0;
 static const unsigned char GH_ONETAP    = 1;
@@ -81,7 +81,7 @@ void GestureHandler::handleTouchBegin(int id, double x, double y)
   // Did it take too long between touches that we should no longer
   // consider this a single gesture?
   if ((tracked.size() > 0) &&
-      (rfb::msSince(&tracked.begin()->second.started) > GH_MULTITOUCH_TIMEOUT)) {
+      (core::msSince(&tracked.begin()->second.started) > GH_MULTITOUCH_TIMEOUT)) {
     state = GH_NOGESTURE;
     ignored.insert(id);
     return;
@@ -95,7 +95,7 @@ void GestureHandler::handleTouchBegin(int id, double x, double y)
     return;
   }
 
-  gettimeofday(&ght.started, NULL);
+  gettimeofday(&ght.started, nullptr);
   ght.active = true;
   ght.lastX = ght.firstX = x;
   ght.lastY = ght.firstY = y;
@@ -238,7 +238,7 @@ void GestureHandler::handleTouchEnd(int id)
     longpressTimer.stop();
 
     if (!waitingRelease) {
-      gettimeofday(&releaseStart, NULL);
+      gettimeofday(&releaseStart, nullptr);
       waitingRelease = true;
 
       // Can't be a tap that requires more touches than we current have
@@ -257,12 +257,12 @@ void GestureHandler::handleTouchEnd(int id)
   // Waiting for all touches to release? (i.e. some tap)
   if (waitingRelease) {
     // Were all touches released at roughly the same time?
-    if (rfb::msSince(&releaseStart) > GH_MULTITOUCH_TIMEOUT)
+    if (core::msSince(&releaseStart) > GH_MULTITOUCH_TIMEOUT)
       state = GH_NOGESTURE;
 
     // Did too long time pass between press and release?
     for (iter = tracked.begin(); iter != tracked.end(); ++iter) {
-      if (rfb::msSince(&iter->second.started) > GH_TAP_TIMEOUT) {
+      if (core::msSince(&iter->second.started) > GH_TAP_TIMEOUT) {
         state = GH_NOGESTURE;
         break;
       }
@@ -323,14 +323,12 @@ bool GestureHandler::hasDetectedGesture()
   return true;
 }
 
-bool GestureHandler::handleTimeout(rfb::Timer* t)
+void GestureHandler::handleTimeout(core::Timer* t)
 {
   if (t == &longpressTimer)
     longpressTimeout();
   else if (t == &twoTouchTimer)
     twoTouchTimeout();
-
-  return false;
 }
 
 void GestureHandler::longpressTimeout()
@@ -377,19 +375,19 @@ void GestureHandler::pushEvent(GestureEventType t)
 
   // For most gesture events the current (average) position is the
   // most useful
-  getPosition(NULL, NULL, &avgX, &avgY);
+  getPosition(nullptr, nullptr, &avgX, &avgY);
 
   // However we have a slight distance to detect gestures, so for the
   // first gesture event we want to use the first positions we saw
   if (t == GestureBegin)
-    getPosition(&avgX, &avgY, NULL, NULL);
+    getPosition(&avgX, &avgY, nullptr, nullptr);
 
   // For these gestures, we always want the event coordinates
   // to be where the gesture began, not the current touch location.
   switch (state) {
     case GH_TWODRAG:
     case GH_PINCH:
-      getPosition(&avgX, &avgY, NULL, NULL);
+      getPosition(&avgX, &avgY, nullptr, nullptr);
       break;
   }
 
@@ -400,9 +398,9 @@ void GestureHandler::pushEvent(GestureEventType t)
   if (state == GH_PINCH) {
     if (t == GestureBegin)
       getAverageDistance(&gev.magnitudeX, &gev.magnitudeY,
-                         NULL, NULL);
+                         nullptr, nullptr);
     else
-      getAverageDistance(NULL, NULL,
+      getAverageDistance(nullptr, nullptr,
                          &gev.magnitudeX, &gev.magnitudeY);
   } else if (state == GH_TWODRAG) {
     if (t == GestureBegin)

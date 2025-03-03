@@ -22,18 +22,26 @@
 #include <config.h>
 #endif
 
+#include <core/LogWriter.h>
+#include <core/string.h>
+#include <core/time.h>
+
+#include <rdr/FdInStream.h>
+#include <rdr/FdOutStream.h>
+
 #include <network/TcpSocket.h>
 
 #include <rfb/ComparingUpdateTracker.h>
 #include <rfb/Encoder.h>
 #include <rfb/Exception.h>
 #include <rfb/KeyRemapper.h>
-#include <rfb/LogWriter.h>
+#include <rfb/KeysymStr.h>
 #include <rfb/Security.h>
 #include <rfb/ServerCore.h>
 #include <rfb/SMsgWriter.h>
 #include <rfb/VNCServerST.h>
 #include <rfb/VNCSConnectionST.h>
+#include <rfb/encodings.h>
 #include <rfb/screenTypes.h>
 #include <rfb/fenceTypes.h>
 #include <rfb/ledStates.h>
@@ -41,20 +49,20 @@
 #define XK_MISCELLANY
 #define XK_XKB_KEYS
 #include <rfb/keysymdef.h>
-#include <rfb/util.h>
 
 using namespace rfb;
 
-static LogWriter vlog("VNCSConnST");
+static core::LogWriter vlog("VNCSConnST");
 
-static Cursor emptyCursor(0, 0, Point(0, 0), NULL);
+static Cursor emptyCursor(0, 0, {0, 0}, nullptr);
 
 VNCSConnectionST::VNCSConnectionST(VNCServerST* server_, network::Socket *s,
-                                   bool reverse)
-  : sock(s), reverseConnection(reverse),
+                                   bool reverse, AccessRights ar)
+  : SConnection(ar),
+    sock(s), reverseConnection(reverse),
     inProcessMessages(false),
     pendingSyncFence(false), syncFence(false), fenceFlags(0),
-    fenceDataLen(0), fenceData(NULL), congestionTimer(this),
+    fenceDataLen(0), fenceData(nullptr), congestionTimer(this),
     losslessTimer(this), server(server_),
     updateRenderedCursor(false), removeRenderedCursor(false),
     continuousUpdates(false), encodeManager(this), idleTimer(this),
@@ -67,9 +75,9 @@ VNCSConnectionST::VNCSConnectionST(VNCServerST* server_, network::Socket *s,
   if (rfb::Server::idleTimeout) {
     // minimum of 15 seconds while authenticating
     if (rfb::Server::idleTimeout < 15)
-      idleTimer.start(secsToMillis(15));
+      idleTimer.start(core::secsToMillis(15));
     else
-      idleTimer.start(secsToMillis(rfb::Server::idleTimeout));
+      idleTimer.start(core::secsToMillis(rfb::Server::idleTimeout));
   }
 }
 
@@ -78,7 +86,7 @@ VNCSConnectionST::~VNCSConnectionST()
 {
   // If we reach here then VNCServerST is deleting us!
   if (!closeReason.empty())
-    vlog.info("closing %s: %s", peerEndpoint.c_str(),
+    vlog.info("Closing %s: %s", peerEndpoint.c_str(),
               closeReason.c_str());
 
   // Release any keys the client still had pressed
@@ -89,8 +97,8 @@ VNCSConnectionST::~VNCSConnectionST()
     keycode = pressedKeys.begin()->first;
     pressedKeys.erase(pressedKeys.begin());
 
-    vlog.debug("Releasing key 0x%x / 0x%x on client disconnect",
-               keysym, keycode);
+    vlog.debug("Releasing key 0x%04x / XK_%s (0x%04x) on client disconnect",
+               keycode, KeySymName(keysym), keysym);
     server->keyEvent(keysym, keycode, false);
   }
 
@@ -118,18 +126,7 @@ void VNCSConnectionST::close(const char* reason)
   if (closeReason.empty())
     closeReason = reason;
   else
-    vlog.debug("second close: %s (%s)", peerEndpoint.c_str(), reason);
-
-  try {
-    if (sock->outStream().hasBufferedData()) {
-      sock->outStream().cork(false);
-      sock->outStream().flush();
-      if (sock->outStream().hasBufferedData())
-        vlog.error("Failed to flush remaining socket data on close");
-    }
-  } catch (rdr::Exception& e) {
-    vlog.error("Failed to flush remaining socket data on close: %s", e.str());
-  }
+    vlog.debug("Second close: %s (%s)", peerEndpoint.c_str(), reason);
 
   // Just shutdown the socket and mark our state as closing.  Eventually the
   // calling code will call VNCServerST's removeSocket() method causing us to
@@ -144,8 +141,8 @@ bool VNCSConnectionST::init()
 {
   try {
     initialiseProtocol();
-  } catch (rdr::Exception& e) {
-    close(e.str());
+  } catch (std::exception& e) {
+    close(e.what());
     return false;
   }
   return true;
@@ -185,10 +182,10 @@ void VNCSConnectionST::processMessages()
     // We wait until now with this to aggregate responses and to give 
     // higher priority to user actions such as keyboard and pointer events.
     writeFramebufferUpdate();
-  } catch (rdr::EndOfStream&) {
+  } catch (rdr::end_of_stream&) {
     close("Clean disconnection");
-  } catch (rdr::Exception &e) {
-    close(e.str());
+  } catch (std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -201,8 +198,8 @@ void VNCSConnectionST::flushSocket()
     // delayed because of congestion.
     if (!sock->outStream().hasBufferedData())
       writeFramebufferUpdate();
-  } catch (rdr::Exception &e) {
-    close(e.str());
+  } catch (std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -223,11 +220,11 @@ void VNCSConnectionST::pixelBufferChange()
       //updates.intersect(server->pb->getRect());
       //
       //if (server->pb->width() > client.width())
-      //  updates.add_changed(Rect(client.width(), 0, server->pb->width(),
-      //                           server->pb->height()));
+      //  updates.add_changed({client.width(), 0, server->pb->width(),
+      //                       server->pb->height()});
       //if (server->pb->height() > client.height())
-      //  updates.add_changed(Rect(0, client.height(), client.width(),
-      //                           server->pb->height()));
+      //  updates.add_changed({0, client.height(), client.width(),
+      //                       server->pb->height()});
 
       damagedCursorRegion.assign_intersect(server->getPixelBuffer()->getRect());
 
@@ -243,15 +240,15 @@ void VNCSConnectionST::pixelBufferChange()
       }
 
       // Drop any lossy tracking that is now outside the framebuffer
-      encodeManager.pruneLosslessRefresh(Region(server->getPixelBuffer()->getRect()));
+      encodeManager.pruneLosslessRefresh(server->getPixelBuffer()->getRect());
     }
     // Just update the whole screen at the moment because we're too lazy to
     // work out what's actually changed.
     updates.clear();
     updates.add_changed(server->getPixelBuffer()->getRect());
     writeFramebufferUpdate();
-  } catch(rdr::Exception &e) {
-    close(e.str());
+  } catch(std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -259,8 +256,8 @@ void VNCSConnectionST::writeFramebufferUpdateOrClose()
 {
   try {
     writeFramebufferUpdate();
-  } catch(rdr::Exception &e) {
-    close(e.str());
+  } catch(std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -269,8 +266,8 @@ void VNCSConnectionST::screenLayoutChangeOrClose(uint16_t reason)
   try {
     screenLayoutChange(reason);
     writeFramebufferUpdate();
-  } catch(rdr::Exception &e) {
-    close(e.str());
+  } catch(std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -278,8 +275,8 @@ void VNCSConnectionST::bellOrClose()
 {
   try {
     if (state() == RFBSTATE_NORMAL) writer()->writeBell();
-  } catch(rdr::Exception& e) {
-    close(e.str());
+  } catch(std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -288,8 +285,8 @@ void VNCSConnectionST::setDesktopNameOrClose(const char *name)
   try {
     setDesktopName(name);
     writeFramebufferUpdate();
-  } catch(rdr::Exception& e) {
-    close(e.str());
+  } catch(std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -298,8 +295,8 @@ void VNCSConnectionST::setCursorOrClose()
   try {
     setCursor();
     writeFramebufferUpdate();
-  } catch(rdr::Exception& e) {
-    close(e.str());
+  } catch(std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -308,8 +305,8 @@ void VNCSConnectionST::setLEDStateOrClose(unsigned int state)
   try {
     setLEDState(state);
     writeFramebufferUpdate();
-  } catch(rdr::Exception& e) {
-    close(e.str());
+  } catch(std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -320,8 +317,8 @@ void VNCSConnectionST::requestClipboardOrClose()
     if (!accessCheck(AccessCutText)) return;
     if (!rfb::Server::acceptCutText) return;
     requestClipboard();
-  } catch(rdr::Exception& e) {
-    close(e.str());
+  } catch(std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -332,8 +329,8 @@ void VNCSConnectionST::announceClipboardOrClose(bool available)
     if (!accessCheck(AccessCutText)) return;
     if (!rfb::Server::sendCutText) return;
     announceClipboard(available);
-  } catch(rdr::Exception& e) {
-    close(e.str());
+  } catch(std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -344,8 +341,8 @@ void VNCSConnectionST::sendClipboardDataOrClose(const char* data)
     if (!accessCheck(AccessCutText)) return;
     if (!rfb::Server::sendCutText) return;
     sendClipboardData(data);
-  } catch(rdr::Exception& e) {
-    close(e.str());
+  } catch(std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -404,7 +401,7 @@ bool VNCSConnectionST::needRenderedCursor()
   if (!client.supportsLocalCursor())
     return true;
   if ((server->getCursorPos() != pointerEventPos) &&
-      (time(0) - pointerEventTime) > 0)
+      (time(nullptr) - pointerEventTime) > 0)
     return true;
 
   return false;
@@ -416,8 +413,8 @@ void VNCSConnectionST::approveConnectionOrClose(bool accept,
 {
   try {
     approveConnection(accept, reason);
-  } catch (rdr::Exception& e) {
-    close(e.str());
+  } catch (std::exception& e) {
+    close(e.what());
   }
 }
 
@@ -428,7 +425,7 @@ void VNCSConnectionST::approveConnectionOrClose(bool accept,
 void VNCSConnectionST::authSuccess()
 {
   if (rfb::Server::idleTimeout)
-    idleTimer.start(secsToMillis(rfb::Server::idleTimeout));
+    idleTimer.start(core::secsToMillis(rfb::Server::idleTimeout));
 
   // - Set the connection parameters appropriately
   client.setDimensions(server->getPixelBuffer()->width(),
@@ -455,7 +452,7 @@ void VNCSConnectionST::queryConnection(const char* userName)
 void VNCSConnectionST::clientInit(bool shared)
 {
   if (rfb::Server::idleTimeout)
-    idleTimer.start(secsToMillis(rfb::Server::idleTimeout));
+    idleTimer.start(core::secsToMillis(rfb::Server::idleTimeout));
   if (rfb::Server::alwaysShared || reverseConnection) shared = true;
   if (!accessCheck(AccessNonShared)) shared = true;
   if (rfb::Server::neverShared) shared = false;
@@ -472,11 +469,12 @@ void VNCSConnectionST::setPixelFormat(const PixelFormat& pf)
   setCursor();
 }
 
-void VNCSConnectionST::pointerEvent(const Point& pos, int buttonMask)
+void VNCSConnectionST::pointerEvent(const core::Point& pos,
+                                    uint16_t buttonMask)
 {
   if (rfb::Server::idleTimeout)
-    idleTimer.start(secsToMillis(rfb::Server::idleTimeout));
-  pointerEventTime = time(0);
+    idleTimer.start(core::secsToMillis(rfb::Server::idleTimeout));
+  pointerEventTime = time(nullptr);
   if (!accessCheck(AccessPtrEvents)) return;
   if (!rfb::Server::acceptPointerEvents) return;
   pointerEventPos = pos;
@@ -491,12 +489,12 @@ public:
   ~VNCSConnectionSTShiftPresser() {
     if (pressed) {
       vlog.debug("Releasing fake Shift_L");
-      server->keyEvent(XK_Shift_L, 0, false);
+      server->keyEvent(XK_Shift_L, 0x2a, false);
     }
   }
   void press() {
     vlog.debug("Pressing fake Shift_L");
-    server->keyEvent(XK_Shift_L, 0, true);
+    server->keyEvent(XK_Shift_L, 0x2a, true);
     pressed = true;
   }
   VNCServerST* server;
@@ -509,14 +507,16 @@ void VNCSConnectionST::keyEvent(uint32_t keysym, uint32_t keycode, bool down) {
   uint32_t lookup;
 
   if (rfb::Server::idleTimeout)
-    idleTimer.start(secsToMillis(rfb::Server::idleTimeout));
+    idleTimer.start(core::secsToMillis(rfb::Server::idleTimeout));
   if (!accessCheck(AccessKeyEvents)) return;
   if (!rfb::Server::acceptKeyEvents) return;
 
   if (down)
-    vlog.debug("Key pressed: 0x%x / 0x%x", keysym, keycode);
+    vlog.debug("Key pressed: 0x%04x / XK_%s (0x%04x)",
+               keycode, KeySymName(keysym), keysym);
   else
-    vlog.debug("Key released: 0x%x / 0x%x", keysym, keycode);
+    vlog.debug("Key released: 0x%04x / XK_%s (0x%04x)",
+               keycode, KeySymName(keysym), keysym);
 
   // Avoid lock keys if we don't know the server state
   if ((server->getLEDState() == ledUnknown) &&
@@ -543,8 +543,8 @@ void VNCSConnectionST::keyEvent(uint32_t keysym, uint32_t keycode, bool down) {
 
         if (lock == (uppercase == shift)) {
           vlog.debug("Inserting fake CapsLock to get in sync with client");
-          server->keyEvent(XK_Caps_Lock, 0, true);
-          server->keyEvent(XK_Caps_Lock, 0, false);
+          server->keyEvent(XK_Caps_Lock, 0x3a, true);
+          server->keyEvent(XK_Caps_Lock, 0x3a, false);
         }
       }
 
@@ -573,8 +573,8 @@ void VNCSConnectionST::keyEvent(uint32_t keysym, uint32_t keycode, bool down) {
           //
         } else if (lock == (number == shift)) {
           vlog.debug("Inserting fake NumLock to get in sync with client");
-          server->keyEvent(XK_Num_Lock, 0, true);
-          server->keyEvent(XK_Num_Lock, 0, false);
+          server->keyEvent(XK_Num_Lock, 0x45, true);
+          server->keyEvent(XK_Num_Lock, 0x45, false);
         }
       }
     }
@@ -610,27 +610,28 @@ void VNCSConnectionST::keyEvent(uint32_t keysym, uint32_t keycode, bool down) {
   server->keyEvent(keysym, keycode, down);
 }
 
-void VNCSConnectionST::framebufferUpdateRequest(const Rect& r,bool incremental)
+void VNCSConnectionST::framebufferUpdateRequest(const core::Rect& r,
+                                                bool incremental)
 {
-  Rect safeRect;
+  core::Rect safeRect;
 
   if (!accessCheck(AccessView)) return;
 
   SConnection::framebufferUpdateRequest(r, incremental);
 
   // Check that the client isn't sending crappy requests
-  if (!r.enclosed_by(Rect(0, 0, client.width(), client.height()))) {
+  if (!r.enclosed_by({0, 0, client.width(), client.height()})) {
     vlog.error("FramebufferUpdateRequest %dx%d at %d,%d exceeds framebuffer %dx%d",
                r.width(), r.height(), r.tl.x, r.tl.y,
                client.width(), client.height());
-    safeRect = r.intersect(Rect(0, 0, client.width(), client.height()));
+    safeRect = r.intersect({0, 0, client.width(), client.height()});
   } else {
     safeRect = r;
   }
 
   // Just update the requested region.
   // Framebuffer update will be sent a bit later, see processMessages().
-  Region reqRgn(safeRect);
+  core::Region reqRgn(safeRect);
   if (!incremental || !continuousUpdates)
     requested.assign_union(reqRgn);
 
@@ -672,7 +673,7 @@ void VNCSConnectionST::setDesktopSize(int fb_width, int fb_height,
   writer()->writeDesktopSize(reasonClient, result);
 }
 
-void VNCSConnectionST::fence(uint32_t flags, unsigned len, const char data[])
+void VNCSConnectionST::fence(uint32_t flags, unsigned len, const uint8_t data[])
 {
   uint8_t type;
 
@@ -683,9 +684,9 @@ void VNCSConnectionST::fence(uint32_t flags, unsigned len, const char data[])
       fenceFlags = flags & (fenceFlagBlockBefore | fenceFlagBlockAfter | fenceFlagSyncNext);
       fenceDataLen = len;
       delete [] fenceData;
-      fenceData = NULL;
+      fenceData = nullptr;
       if (len > 0) {
-        fenceData = new char[len];
+        fenceData = new uint8_t[len];
         memcpy(fenceData, data, len);
       }
 
@@ -699,8 +700,10 @@ void VNCSConnectionST::fence(uint32_t flags, unsigned len, const char data[])
     return;
   }
 
-  if (len < 1)
+  if (len < 1) {
     vlog.error("Fence response of unexpected size received");
+    return;
+  }
 
   type = data[0];
 
@@ -719,10 +722,13 @@ void VNCSConnectionST::fence(uint32_t flags, unsigned len, const char data[])
 void VNCSConnectionST::enableContinuousUpdates(bool enable,
                                                int x, int y, int w, int h)
 {
-  Rect rect;
+  core::Rect rect;
+
+  if (!accessCheck(AccessView))
+    return;
 
   if (!client.supportsFence() || !client.supportsContinuousUpdates())
-    throw Exception("Client tried to enable continuous updates when not allowed");
+    throw protocol_error("Client tried to enable continuous updates when not allowed");
 
   continuousUpdates = enable;
 
@@ -771,7 +777,7 @@ void VNCSConnectionST::supportsLocalCursor()
 
 void VNCSConnectionST::supportsFence()
 {
-  char type = 0;
+  uint8_t type = 0;
   writer()->writeFence(fenceFlagRequest, sizeof(type), &type);
 }
 
@@ -793,20 +799,18 @@ void VNCSConnectionST::supportsLEDState()
   writer()->writeLEDState();
 }
 
-bool VNCSConnectionST::handleTimeout(Timer* t)
+void VNCSConnectionST::handleTimeout(core::Timer* t)
 {
   try {
     if ((t == &congestionTimer) ||
         (t == &losslessTimer))
       writeFramebufferUpdate();
-  } catch (rdr::Exception& e) {
-    close(e.str());
+  } catch (std::exception& e) {
+    close(e.what());
   }
 
   if (t == &idleTimer)
     close("Idle timeout");
-
-  return false;
 }
 
 bool VNCSConnectionST::isShiftPressed()
@@ -825,7 +829,7 @@ bool VNCSConnectionST::isShiftPressed()
 
 void VNCSConnectionST::writeRTTPing()
 {
-  char type;
+  uint8_t type;
 
   if (!client.supportsFence())
     return;
@@ -926,7 +930,7 @@ void VNCSConnectionST::writeNoDataUpdate()
 
 void VNCSConnectionST::writeDataUpdate()
 {
-  Region req;
+  core::Region req;
   UpdateInfo ui;
   bool needNewUpdateInfo;
   const RenderedCursor *cursor;
@@ -951,7 +955,7 @@ void VNCSConnectionST::writeDataUpdate()
   // destination will be wrong, so add it to the changed region.
 
   if (!ui.copied.is_empty() && !damagedCursorRegion.is_empty()) {
-    Region bogusCopiedCursor;
+    core::Region bogusCopiedCursor;
 
     bogusCopiedCursor = damagedCursorRegion;
     bogusCopiedCursor.translate(ui.copy_delta);
@@ -996,9 +1000,9 @@ void VNCSConnectionST::writeDataUpdate()
 
   // Does the client need a server-side rendered cursor?
 
-  cursor = NULL;
+  cursor = nullptr;
   if (needRenderedCursor()) {
-    Rect renderedCursorRect;
+    core::Rect renderedCursorRect;
 
     cursor = server->getRenderedCursor();
     renderedCursorRect = cursor->getEffectiveRect();
@@ -1038,7 +1042,7 @@ void VNCSConnectionST::writeDataUpdate()
 
 void VNCSConnectionST::writeLosslessRefresh()
 {
-  Region req, pending;
+  core::Region req, pending;
   const RenderedCursor *cursor;
 
   int nextRefresh, nextUpdate;
@@ -1078,7 +1082,7 @@ void VNCSConnectionST::writeLosslessRefresh()
 
   // Prepare the cursor in case it overlaps with a region getting
   // refreshed
-  cursor = NULL;
+  cursor = nullptr;
   if (needRenderedCursor())
     cursor = server->getRenderedCursor();
 

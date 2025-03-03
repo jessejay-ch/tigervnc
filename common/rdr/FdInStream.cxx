@@ -28,7 +28,7 @@
 #include <winsock2.h>
 #define errorNumber WSAGetLastError()
 #define close closesocket
-#include <os/winerrno.h>
+#include <core/winerrno.h>
 #else
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -41,8 +41,9 @@
 #include <sys/select.h>
 #endif
 
+#include <core/Exception.h>
+
 #include <rdr/FdInStream.h>
-#include <rdr/Exception.h>
 
 using namespace rdr;
 
@@ -77,7 +78,7 @@ bool FdInStream::fillBuffer()
 // returning EINTR.
 //
 
-size_t FdInStream::readFd(void* buf, size_t len)
+size_t FdInStream::readFd(uint8_t* buf, size_t len)
 {
   int n;
   do {
@@ -88,11 +89,11 @@ size_t FdInStream::readFd(void* buf, size_t len)
 
     FD_ZERO(&fds);
     FD_SET(fd, &fds);
-    n = select(fd+1, &fds, 0, 0, &tv);
+    n = select(fd+1, &fds, nullptr, nullptr, &tv);
   } while (n < 0 && errorNumber == EINTR);
 
   if (n < 0)
-    throw SystemException("select", errorNumber);
+    throw core::socket_error("select", errorNumber);
 
   if (n == 0)
     return 0;
@@ -102,9 +103,9 @@ size_t FdInStream::readFd(void* buf, size_t len)
   } while (n < 0 && errorNumber == EINTR);
 
   if (n < 0)
-    throw SystemException("read", errorNumber);
+    throw core::socket_error("read", errorNumber);
   if (n == 0)
-    throw EndOfStream();
+    throw end_of_stream();
 
   return n;
 }

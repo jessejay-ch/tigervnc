@@ -24,9 +24,11 @@
 #ifndef __RFB_SDISPLAY_H__
 #define __RFB_SDISPLAY_H__
 
+#include <core/Configuration.h>
+
 #include <rfb/SDesktop.h>
 #include <rfb/UpdateTracker.h>
-#include <rfb/Configuration.h>
+
 #include <rfb_win32/Handle.h>
 #include <rfb_win32/EventManager.h>
 #include <rfb_win32/SInput.h>
@@ -48,7 +50,7 @@ namespace rfb {
     class SDisplayCore {
     public:
       virtual ~SDisplayCore() {};
-      virtual void setScreenRect(const Rect& screenRect_) = 0;
+      virtual void setScreenRect(const core::Rect& screenRect_) = 0;
       virtual void flushUpdates() = 0;
       virtual const char* methodName() const = 0;
     };
@@ -71,30 +73,32 @@ namespace rfb {
 
       // -=- SDesktop interface
 
-      virtual void start(VNCServer* vs);
-      virtual void stop();
-      virtual void terminate();
-      virtual void queryConnection(network::Socket* sock,
-                                   const char* userName);
-      virtual void handleClipboardRequest();
-      virtual void handleClipboardAnnounce(bool available);
-      virtual void handleClipboardData(const char* data);
-      virtual void pointerEvent(const Point& pos, int buttonmask);
-      virtual void keyEvent(uint32_t keysym, uint32_t keycode, bool down);
+      void init(VNCServer* vs) override;
+      void start() override;
+      void stop() override;
+      void terminate() override;
+      void queryConnection(network::Socket* sock,
+                           const char* userName) override;
+      void handleClipboardRequest() override;
+      void handleClipboardAnnounce(bool available) override;
+      void handleClipboardData(const char* data) override;
+      void pointerEvent(const core::Point& pos,
+                        uint16_t buttonmask) override;
+      void keyEvent(uint32_t keysym, uint32_t keycode, bool down) override;
 
       // -=- Clipboard events
       
-      virtual void notifyClipboardChanged(bool available);
+      void notifyClipboardChanged(bool available) override;
 
       // -=- Display events
       
-      virtual void notifyDisplayEvent(WMMonitor::Notifier::DisplayEventType evt);
+      void notifyDisplayEvent(WMMonitor::Notifier::DisplayEventType evt) override;
 
       // -=- EventHandler interface
 
       HANDLE getUpdateEvent() {return updateEvent;}
       HANDLE getTerminateEvent() {return terminateEvent;}
-      virtual void processEvent(HANDLE event);
+      void processEvent(HANDLE event) override;
 
       // -=- Notification of whether or not SDisplay is started
 
@@ -106,11 +110,11 @@ namespace rfb {
         queryConnectionHandler = qch;
       }
 
-      static IntParameter updateMethod;
-      static BoolParameter disableLocalInputs;
-      static StringParameter disconnectAction;
-      static BoolParameter removeWallpaper;
-      static BoolParameter disableEffects;
+      static core::IntParameter updateMethod;
+      static core::BoolParameter disableLocalInputs;
+      static core::StringParameter disconnectAction;
+      static core::BoolParameter removeWallpaper;
+      static core::BoolParameter disableEffects;
 
       // -=- Use by VNC Config to determine whether hooks are available
       static bool areHooksAvailable();
@@ -132,7 +136,7 @@ namespace rfb {
       DeviceContext* device;
 
       // -=- The coordinates of Window's entire virtual Screen
-      Rect screenRect;
+      core::Rect screenRect;
 
       // -=- All changes are collected in UN-CLIPPED Display coords and merged
       //     When they are to be flushed to the VNCServer, they are changed
@@ -161,8 +165,8 @@ namespace rfb {
       // Cursor
       WMCursor* cursor;
       WMCursor::Info old_cursor;
-      Region old_cursor_region;
-      Point cursor_renderpos;
+      core::Region old_cursor_region;
+      core::Point cursor_renderpos;
 
       // -=- Event signalled to trigger an update to be flushed
       Handle updateEvent;

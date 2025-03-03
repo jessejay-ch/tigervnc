@@ -21,13 +21,14 @@
 #ifndef __RDR_TLSEXCEPTION_H__
 #define __RDR_TLSEXCEPTION_H__
 
-#include <rdr/Exception.h>
+#include <stdexcept>
 
 namespace rdr {
 
-  struct TLSException : public Exception {
+  class tls_error : public std::runtime_error {
+  public:
     int err;
-    TLSException(const char* s, int err_);
+    tls_error(const char* s, int err_) noexcept;
   };
 
 }

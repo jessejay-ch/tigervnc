@@ -23,9 +23,10 @@
 #include <config.h>
 #endif
 
+#include <core/Rect.h>
+
 #include <rfb/JpegDecompressor.h>
-#include <rdr/Exception.h>
-#include <rfb/Rect.h>
+#include <rfb/Exception.h>
 #include <rfb/PixelFormat.h>
 
 #include <stdio.h>
@@ -120,7 +121,7 @@ JpegDecompressor::JpegDecompressor(void)
 
   if(setjmp(err->jmpBuffer)) {
     // this will execute if libjpeg has an error
-    throw rdr::Exception("%s", err->lastError);
+    throw std::runtime_error(err->lastError);
   }
 
   jpeg_create_decompress(dinfo);
@@ -153,22 +154,23 @@ JpegDecompressor::~JpegDecompressor(void)
 void JpegDecompressor::decompress(const uint8_t *jpegBuf,
                                   int jpegBufLen, uint8_t *buf,
                                   volatile int stride,
-                                  const Rect& r, const PixelFormat& pf)
+                                  const core::Rect& r,
+                                  const PixelFormat& pf)
 {
   int w = r.width();
   int h = r.height();
   int pixelsize;
   int dstBufStride;
-  uint8_t * volatile dstBuf = NULL;
+  uint8_t * volatile dstBuf = nullptr;
   volatile bool dstBufIsTemp = false;
-  JSAMPROW * volatile rowPointer = NULL;
+  JSAMPROW * volatile rowPointer = nullptr;
 
   if(setjmp(err->jmpBuffer)) {
     // this will execute if libjpeg has an error
     jpeg_abort_decompress(dinfo);
     if (dstBufIsTemp && dstBuf) delete[] dstBuf;
     if (rowPointer) delete[] rowPointer;
-    throw rdr::Exception("%s", err->lastError);
+    throw std::runtime_error(err->lastError);
   }
 
   src->pub.next_input_byte = jpegBuf;
@@ -217,7 +219,7 @@ void JpegDecompressor::decompress(const uint8_t *jpegBuf,
     jpeg_abort_decompress(dinfo);
     if (dstBufIsTemp && dstBuf) delete[] dstBuf;
     if (rowPointer) delete[] rowPointer;
-    throw rdr::Exception("Tight Decoding: Wrong JPEG data received.\n");
+    throw protocol_error("Tight Decoding: Wrong JPEG data received.\n");
   }
 
   while (dinfo->output_scanline < dinfo->output_height) {

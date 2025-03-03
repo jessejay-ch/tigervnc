@@ -19,7 +19,8 @@
 #ifndef __QUERYCONNECTDIALOG_H__
 #define __QUERYCONNECTDIALOG_H__
 
-#include <rfb/Timer.h>
+#include <core/Timer.h>
+
 #include "TXLabel.h"
 #include "TXButton.h"
 #include "TXDialog.h"
@@ -34,23 +35,23 @@ class QueryResultCallback {
 
 class QueryConnectDialog : public TXDialog, public TXEventHandler,
                            public TXButtonCallback,
-                           public rfb::Timer::Callback
+                           public core::Timer::Callback
 {
  public:
   QueryConnectDialog(Display* dpy, const char* address_,
                      const char* user_, int timeout_,
                      QueryResultCallback* cb);
-  void handleEvent(TXWindow*, XEvent* ) { }
-  void deleteWindow(TXWindow*);
-  void buttonActivate(TXButton* b);
-  bool handleTimeout(rfb::Timer* t);
+  void handleEvent(TXWindow*, XEvent* ) override { }
+  void deleteWindow(TXWindow*) override;
+  void buttonActivate(TXButton* b) override;
+  void handleTimeout(core::Timer* t) override;
  private:
   void refreshTimeout();
   TXLabel addressLbl, address, userLbl, user, timeoutLbl, timeout;
   TXButton accept, reject;
   QueryResultCallback* callback;
   int timeUntilReject;
-  rfb::Timer timer;
+  core::Timer timer;
 };
 
 #endif

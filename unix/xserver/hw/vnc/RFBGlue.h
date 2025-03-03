@@ -36,7 +36,6 @@ void vncLogDebug(const char *name, const char *format, ...)
         __attribute__((__format__ (__printf__, 2, 3)));
 
 int vncSetParam(const char *name, const char *value);
-int vncSetParamSimple(const char *nameAndValue);
 char* vncGetParam(const char *name);
 const char* vncGetParamDesc(const char *name);
 int vncIsParamBool(const char *name);
@@ -45,6 +44,8 @@ int vncGetParamCount(void);
 char *vncGetParamList(void);
 void vncListParams(int width, int nameWidth);
 
+int vncHandleParamArg(int argc, char* argv[], int index);
+
 int vncGetSocketPort(int fd);
 int vncIsTCPPortUsed(int port);
 
@@ -52,6 +53,8 @@ char* vncConvertLF(const char* src, size_t bytes);
 
 char* vncLatin1ToUTF8(const char* src, size_t bytes);
 char* vncUTF8ToLatin1(const char* src, size_t bytes);
+
+int vncIsValidUTF8(const char* str, size_t bytes);
 
 #ifdef __cplusplus
 }

@@ -23,6 +23,14 @@
 
 #include <stdio.h>
 #include <string.h>
+
+#include <algorithm>
+
+#include <core/LogWriter.h>
+#include <core/string.h>
+
+#include <rdr/OutStream.h>
+
 #include <rfb/Exception.h>
 #include <rfb/Security.h>
 #include <rfb/clipboardTypes.h>
@@ -35,32 +43,17 @@
 #include <rfb/encodings.h>
 #include <rfb/EncodeManager.h>
 #include <rfb/SSecurity.h>
-#include <rfb/util.h>
-
-#include <rfb/LogWriter.h>
 
 using namespace rfb;
 
-static LogWriter vlog("SConnection");
+static core::LogWriter vlog("SConnection");
 
-// AccessRights values
-const SConnection::AccessRights SConnection::AccessView           = 0x0001;
-const SConnection::AccessRights SConnection::AccessKeyEvents      = 0x0002;
-const SConnection::AccessRights SConnection::AccessPtrEvents      = 0x0004;
-const SConnection::AccessRights SConnection::AccessCutText        = 0x0008;
-const SConnection::AccessRights SConnection::AccessSetDesktopSize = 0x0010;
-const SConnection::AccessRights SConnection::AccessNonShared      = 0x0020;
-const SConnection::AccessRights SConnection::AccessDefault        = 0x03ff;
-const SConnection::AccessRights SConnection::AccessNoQuery        = 0x0400;
-const SConnection::AccessRights SConnection::AccessFull           = 0xffff;
-
-
-SConnection::SConnection()
-  : readyForSetColourMapEntries(false),
-    is(0), os(0), reader_(0), writer_(0), ssecurity(0),
+SConnection::SConnection(AccessRights accessRights_)
+  : readyForSetColourMapEntries(false), is(nullptr), os(nullptr),
+    reader_(nullptr), writer_(nullptr), ssecurity(nullptr),
     authFailureTimer(this, &SConnection::handleAuthFailureTimeout),
     state_(RFBSTATE_UNINITIALISED), preferredEncoding(encodingRaw),
-    accessRights(0x0000), hasRemoteClipboard(false),
+    accessRights(accessRights_), hasRemoteClipboard(false),
     hasLocalClipboard(false),
     unsolicitedClipboardAttempt(false)
 {
@@ -88,7 +81,7 @@ void SConnection::initialiseProtocol()
   char str[13];
 
   sprintf(str, "RFB %03d.%03d\n", defaultMajorVersion, defaultMinorVersion);
-  os->writeBytes(str, 12);
+  os->writeBytes((const uint8_t*)str, 12);
   os->flush();
 
   state_ = RFBSTATE_PROTOCOL_VERSION;
@@ -104,14 +97,14 @@ bool SConnection::processMsg()
   case RFBSTATE_INITIALISATION:   return processInitMsg();         break;
   case RFBSTATE_NORMAL:           return reader_->readMsg();       break;
   case RFBSTATE_QUERYING:
-    throw Exception("SConnection::processMsg: bogus data from client while "
-                    "querying");
+    throw std::logic_error("SConnection::processMsg: Bogus data from "
+                           "client while querying");
   case RFBSTATE_CLOSING:
-    throw Exception("SConnection::processMsg: called while closing");
+    throw std::logic_error("SConnection::processMsg: Called while closing");
   case RFBSTATE_UNINITIALISED:
-    throw Exception("SConnection::processMsg: not initialised yet?");
+    throw std::logic_error("SConnection::processMsg: Not initialised yet?");
   default:
-    throw Exception("SConnection::processMsg: invalid state");
+    throw std::logic_error("SConnection::processMsg: Invalid state");
   }
 }
 
@@ -121,18 +114,18 @@ bool SConnection::processVersionMsg()
   int majorVersion;
   int minorVersion;
 
-  vlog.debug("reading protocol version");
+  vlog.debug("Reading protocol version");
 
   if (!is->hasData(12))
     return false;
 
-  is->readBytes(verStr, 12);
+  is->readBytes((uint8_t*)verStr, 12);
   verStr[12] = '\0';
 
   if (sscanf(verStr, "RFB %03d.%03d\n",
              &majorVersion, &minorVersion) != 2) {
     state_ = RFBSTATE_INVALID;
-    throw Exception("reading version failed: not an RFB client?");
+    throw protocol_error("Reading version failed, not an RFB client?");
   }
 
   client.setVersion(majorVersion, minorVersion);
@@ -142,9 +135,10 @@ bool SConnection::processVersionMsg()
 
   if (client.majorVersion != 3) {
     // unknown protocol version
-    throwConnFailedException("Client needs protocol version %d.%d, server has %d.%d",
-                             client.majorVersion, client.minorVersion,
-                             defaultMajorVersion, defaultMinorVersion);
+    failConnection(core::format(
+      "Client needs protocol version %d.%d, server has %d.%d",
+      client.majorVersion, client.minorVersion,
+      defaultMajorVersion, defaultMinorVersion));
   }
 
   if (client.minorVersion != 3 && client.minorVersion != 7 && client.minorVersion != 8) {
@@ -174,8 +168,9 @@ bool SConnection::processVersionMsg()
       if (*i == secTypeNone || *i == secTypeVncAuth) break;
     }
     if (i == secTypes.end()) {
-      throwConnFailedException("No supported security type for %d.%d client",
-                               client.majorVersion, client.minorVersion);
+      failConnection(
+        core::format("No supported security type for %d.%d client",
+                     client.majorVersion, client.minorVersion));
     }
 
     os->writeU32(*i);
@@ -188,7 +183,7 @@ bool SConnection::processVersionMsg()
   // list supported security types for >=3.7 clients
 
   if (secTypes.empty())
-    throwConnFailedException("No supported security types");
+    failConnection("No supported security types");
 
   os->writeU8(secTypes.size());
   for (i=secTypes.begin(); i!=secTypes.end(); i++)
@@ -202,7 +197,7 @@ bool SConnection::processVersionMsg()
 
 bool SConnection::processSecurityTypeMsg()
 {
-  vlog.debug("processing security type message");
+  vlog.debug("Processing security type message");
 
   if (!is->hasData(1))
     return false;
@@ -218,13 +213,11 @@ void SConnection::processSecurityType(int secType)
 {
   // Verify that the requested security type should be offered
   std::list<uint8_t> secTypes;
-  std::list<uint8_t>::iterator i;
 
   secTypes = security.GetEnabledSecTypes();
-  for (i=secTypes.begin(); i!=secTypes.end(); i++)
-    if (*i == secType) break;
-  if (i == secTypes.end())
-    throw Exception("Requested security type not available");
+  if (std::find(secTypes.begin(), secTypes.end(),
+                secType) == secTypes.end())
+    throw protocol_error("Requested security type not available");
 
   vlog.info("Client requests security type %s(%d)",
             secTypeName(secType),secType);
@@ -232,29 +225,29 @@ void SConnection::processSecurityType(int secType)
   try {
     state_ = RFBSTATE_SECURITY;
     ssecurity = security.GetSSecurity(this, secType);
-  } catch (rdr::Exception& e) {
-    throwConnFailedException("%s", e.str());
+  } catch (std::exception& e) {
+    failConnection(e.what());
   }
 }
 
 bool SConnection::processSecurityMsg()
 {
-  vlog.debug("processing security message");
+  vlog.debug("Processing security message");
   try {
     if (!ssecurity->processMsg())
       return false;
-  } catch (AuthFailureException& e) {
-    vlog.error("AuthFailureException: %s", e.str());
+  } catch (auth_error& e) {
+    vlog.error("Authentication error: %s", e.what());
     state_ = RFBSTATE_SECURITY_FAILURE;
     // Introduce a slight delay of the authentication failure response
     // to make it difficult to brute force a password
-    authFailureMsg = e.str();
+    authFailureMsg = e.what();
     authFailureTimer.start(100);
     return true;
   }
 
   state_ = RFBSTATE_QUERYING;
-  setAccessRights(ssecurity->getAccessRights());
+  setAccessRights(accessRights & ssecurity->getAccessRights());
   queryConnection(ssecurity->getUserName());
 
   // If the connection got approved right away then we can continue
@@ -283,61 +276,58 @@ bool SConnection::processSecurityFailure()
 
 bool SConnection::processInitMsg()
 {
-  vlog.debug("reading client initialisation");
+  vlog.debug("Reading client initialisation");
   return reader_->readClientInit();
 }
 
-bool SConnection::handleAuthFailureTimeout(Timer* /*t*/)
+void SConnection::handleAuthFailureTimeout(core::Timer* /*t*/)
 {
   if (state_ != RFBSTATE_SECURITY_FAILURE) {
-    close("SConnection::handleAuthFailureTimeout: invalid state");
-    return false;
+    close("SConnection::handleAuthFailureTimeout: Invalid state");
+    return;
   }
 
   try {
     os->writeU32(secResultFailed);
     if (!client.beforeVersion(3,8)) { // 3.8 onwards have failure message
       os->writeU32(authFailureMsg.size());
-      os->writeBytes(authFailureMsg.data(), authFailureMsg.size());
+      os->writeBytes((const uint8_t*)authFailureMsg.data(),
+                     authFailureMsg.size());
     }
     os->flush();
-  } catch (rdr::Exception& e) {
-    close(e.str());
-    return false;
+  } catch (std::exception& e) {
+    close(e.what());
+    return;
   }
 
   close(authFailureMsg.c_str());
-
-  return false;
 }
 
-void SConnection::throwConnFailedException(const char* format, ...)
+void SConnection::failConnection(const char* message)
 {
-	va_list ap;
-	char str[256];
-
-	va_start(ap, format);
-	(void) vsnprintf(str, sizeof(str), format, ap);
-	va_end(ap);
-
-  vlog.info("Connection failed: %s", str);
+  vlog.info("Connection failed: %s", message);
 
   if (state_ == RFBSTATE_PROTOCOL_VERSION) {
     if (client.majorVersion == 3 && client.minorVersion == 3) {
       os->writeU32(0);
-      os->writeU32(strlen(str));
-      os->writeBytes(str, strlen(str));
+      os->writeU32(strlen(message));
+      os->writeBytes((const uint8_t*)message, strlen(message));
       os->flush();
     } else {
       os->writeU8(0);
-      os->writeU32(strlen(str));
-      os->writeBytes(str, strlen(str));
+      os->writeU32(strlen(message));
+      os->writeBytes((const uint8_t*)message, strlen(message));
       os->flush();
     }
   }
 
   state_ = RFBSTATE_INVALID;
-  throw ConnFailedException(str);
+  throw protocol_error(message);
+}
+
+void SConnection::failConnection(const std::string& message)
+{
+  failConnection(message.c_str());
 }
 
 void SConnection::setAccessRights(AccessRights ar)
@@ -348,7 +338,7 @@ void SConnection::setAccessRights(AccessRights ar)
 bool SConnection::accessCheck(AccessRights ar) const
 {
   if (state_ < RFBSTATE_QUERYING)
-    throw Exception("SConnection::accessCheck: invalid state");
+    throw std::logic_error("SConnection::accessCheck: Invalid state");
 
   return (accessRights & ar) == ar;
 }
@@ -382,7 +372,7 @@ void SConnection::clientCutText(const char* str)
 {
   hasLocalClipboard = false;
 
-  clientClipboard = latin1ToUTF8(str);
+  clientClipboard = str;
   hasRemoteClipboard = true;
 
   handleClipboardAnnounce(true);
@@ -428,7 +418,12 @@ void SConnection::handleClipboardProvide(uint32_t flags,
     return;
   }
 
-  clientClipboard = convertLF((const char*)data[0], lengths[0]);
+  // FIXME: This conversion magic should be in SMsgReader
+  if (!core::isValidUTF8((const char*)data[0], lengths[0])) {
+    vlog.error("Invalid UTF-8 sequence in clipboard - ignoring");
+    return;
+  }
+  clientClipboard = core::convertLF((const char*)data[0], lengths[0]);
   hasRemoteClipboard = true;
 
   // FIXME: Should probably verify that this data was actually requested
@@ -438,6 +433,11 @@ void SConnection::handleClipboardProvide(uint32_t flags,
 void SConnection::supportsQEMUKeyEvent()
 {
   writer()->writeQEMUKeyEvent();
+}
+
+void SConnection::supportsExtendedMouseButtons()
+{
+  writer()->writeExtendedMouseButtonsSupport();
 }
 
 void SConnection::versionReceived()
@@ -456,7 +456,7 @@ void SConnection::queryConnection(const char* /*userName*/)
 void SConnection::approveConnection(bool accept, const char* reason)
 {
   if (state_ != RFBSTATE_QUERYING)
-    throw Exception("SConnection::approveConnection: invalid state");
+    throw std::logic_error("SConnection::approveConnection: Invalid state");
 
   if (!client.beforeVersion(3,8) || ssecurity->getType() != secTypeNone) {
     if (accept) {
@@ -465,9 +465,9 @@ void SConnection::approveConnection(bool accept, const char* reason)
       os->writeU32(secResultFailed);
       if (!client.beforeVersion(3,8)) { // 3.8 onwards have failure message
         if (!reason)
-          reason = "Authentication failure";
+          reason = "Connection rejected";
         os->writeU32(strlen(reason));
-        os->writeBytes(reason, strlen(reason));
+        os->writeBytes((const uint8_t*)reason, strlen(reason));
       }
     }
     os->flush();
@@ -481,9 +481,9 @@ void SConnection::approveConnection(bool accept, const char* reason)
   } else {
     state_ = RFBSTATE_INVALID;
     if (reason)
-      throw AuthFailureException(reason);
+      throw auth_error(reason);
     else
-      throw AuthFailureException();
+      throw auth_error("Connection rejected");
   }
 }
 
@@ -508,7 +508,7 @@ void SConnection::setPixelFormat(const PixelFormat& pf)
     writeFakeColourMap();
 }
 
-void SConnection::framebufferUpdateRequest(const Rect& /*r*/,
+void SConnection::framebufferUpdateRequest(const core::Rect& /*r*/,
                                            bool /*incremental*/)
 {
   if (!readyForSetColourMapEntries) {
@@ -519,7 +519,8 @@ void SConnection::framebufferUpdateRequest(const Rect& /*r*/,
   }
 }
 
-void SConnection::fence(uint32_t flags, unsigned len, const char data[])
+void SConnection::fence(uint32_t flags, unsigned len,
+                        const uint8_t data[])
 {
   if (!(flags & fenceFlagRequest))
     return;
@@ -590,9 +591,10 @@ void SConnection::sendClipboardData(const char* data)
 {
   if (client.supportsEncoding(pseudoEncodingExtendedClipboard) &&
       (client.clipboardFlags() & rfb::clipboardProvide)) {
-    std::string filtered(convertCRLF(data));
+    // FIXME: This conversion magic should be in SMsgWriter
+    std::string filtered(core::convertCRLF(data));
     size_t sizes[1] = { filtered.size() + 1 };
-    const uint8_t* data[1] = { (const uint8_t*)filtered.c_str() };
+    const uint8_t* datas[1] = { (const uint8_t*)filtered.c_str() };
 
     if (unsolicitedClipboardAttempt) {
       unsolicitedClipboardAttempt = false;
@@ -604,22 +606,20 @@ void SConnection::sendClipboardData(const char* data)
       }
     }
 
-    writer()->writeClipboardProvide(rfb::clipboardUTF8, sizes, data);
+    writer()->writeClipboardProvide(rfb::clipboardUTF8, sizes, datas);
   } else {
-    std::string latin1(utf8ToLatin1(data));
-
-    writer()->writeServerCutText(latin1.c_str());
+    writer()->writeServerCutText(data);
   }
 }
 
 void SConnection::cleanup()
 {
   delete ssecurity;
-  ssecurity = NULL;
+  ssecurity = nullptr;
   delete reader_;
-  reader_ = NULL;
+  reader_ = nullptr;
   delete writer_;
-  writer_ = NULL;
+  writer_ = nullptr;
 }
 
 void SConnection::writeFakeColourMap(void)

@@ -20,19 +20,20 @@
 #include <config.h>
 #endif
 
+#include <core/LogWriter.h>
+
 #include <rfb_win32/AboutDialog.h>
 #include <rfb_win32/Win32Util.h>
-#include <rfb/LogWriter.h>
 
 using namespace rfb;
 using namespace rfb::win32;
 
-static LogWriter vlog("AboutDialog");
+static core::LogWriter vlog("AboutDialog");
 
 AboutDialog AboutDialog::instance;
 
 
-AboutDialog::AboutDialog() : Dialog(GetModuleHandle(0)) {
+AboutDialog::AboutDialog() : Dialog(GetModuleHandle(nullptr)) {
 }
 
 bool AboutDialog::showDialog() {

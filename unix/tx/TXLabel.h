@@ -27,15 +27,18 @@
 #define __TXLABEL_H__
 
 #include <stdlib.h>
+
+#include <algorithm>
+
 #include "TXWindow.h"
-#include <rfb/util.h>
+#include <core/string.h>
 
 class TXLabel : public TXWindow, public TXEventHandler {
 public:
   enum HAlign { left, centre, right };
   enum VAlign { top, middle, bottom };
 
-  TXLabel(Display* dpy_, const char* text_, TXWindow* parent_=0,
+  TXLabel(Display* dpy_, const char* text_, TXWindow* parent_=nullptr,
           int w=1, int h=1, HAlign ha=centre, VAlign va=middle)
     : TXWindow(dpy_, w, h, parent_), lineSpacing(2), lines(0),
       halign(ha), valign(va)
@@ -63,8 +66,8 @@ public:
     } while (i < text.size());
     int textHeight = ((defaultFS->ascent + defaultFS->descent + lineSpacing)
                       * lines);
-    int newWidth = __rfbmax(width(), textWidth + xPad*2);
-    int newHeight = __rfbmax(height(), textHeight + yPad*2);
+    int newWidth = std::max(width(), textWidth + xPad*2);
+    int newHeight = std::max(height(), textHeight + yPad*2);
     if (width() < newWidth || height() < newHeight) {
       resize(newWidth, newHeight);
     }
@@ -108,7 +111,7 @@ private:
     } while (i < text.size());
   }
 
-  virtual void handleEvent(TXWindow* /*w*/, XEvent* ev) {
+  void handleEvent(TXWindow* /*w*/, XEvent* ev) override {
     switch (ev->type) {
     case Expose:
       paint();

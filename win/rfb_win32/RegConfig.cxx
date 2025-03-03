@@ -24,18 +24,23 @@
 
 #include <malloc.h>
 
+#include <core/LogWriter.h>
+
 #include <rfb_win32/RegConfig.h>
-#include <rfb/LogWriter.h>
+
 //#include <rdr/HexOutStream.h>
 
 using namespace rfb;
 using namespace rfb::win32;
 
 
-static LogWriter vlog("RegConfig");
+static core::LogWriter vlog("RegConfig");
 
 
-RegConfig::RegConfig(EventManager* em) : eventMgr(em), event(CreateEvent(0, TRUE, FALSE, 0)), callback(0) {
+RegConfig::RegConfig(EventManager* em)
+  : eventMgr(em), event(CreateEvent(nullptr, TRUE, FALSE, nullptr)),
+    callback(nullptr)
+{
   if (em->addEvent(event, this))
     eventMgr = em;
 }
@@ -50,8 +55,8 @@ bool RegConfig::setKey(const HKEY rootkey, const char* keyname) {
     key.createKey(rootkey, keyname);
     processEvent(event);
     return true;
-  } catch (rdr::Exception& e) {
-    vlog.debug("%s", e.str());
+  } catch (std::exception& e) {
+    vlog.debug("%s", e.what());
     return false;
   }
 }
@@ -63,17 +68,17 @@ void RegConfig::loadRegistryConfig(RegKey& key) {
       const char *name = key.getValueName(i++);
       if (!name) break;
       std::string value = key.getRepresentation(name);
-      if (!Configuration::setParam(name, value.c_str()))
-        vlog.info("unable to process %s", name);
+      if (!core::Configuration::setParam(name, value.c_str()))
+        vlog.info("Unable to process %s", name);
     }
-  } catch (rdr::SystemException& e) {
-    if (e.err != 6)
-      vlog.error("%s", e.str());
+  } catch (core::win32_error& e) {
+    if (e.err != ERROR_INVALID_HANDLE)
+      vlog.error("%s", e.what());
   }
 }
 
 void RegConfig::processEvent(HANDLE /*event*/) {
-  vlog.info("registry changed");
+  vlog.info("Registry changed");
 
   // Reinstate the registry change notifications
   ResetEvent(event);
@@ -110,7 +115,7 @@ void RegConfigThread::worker() {
   BOOL result = 0;
   MSG msg;
   thread_id = GetCurrentThreadId();
-  while ((result = eventMgr.getMessage(&msg, 0, 0, 0)) > 0) {}
+  while ((result = eventMgr.getMessage(&msg, nullptr, 0, 0)) > 0) {}
   if (result < 0)
-    throw rdr::SystemException("RegConfigThread failed", GetLastError());
+    throw core::win32_error("RegConfigThread failed", GetLastError());
 }

@@ -40,15 +40,14 @@
 #include <rdr/OutStream.h>
 #include <rdr/RandomStream.h>
 #include <rfb/Exception.h>
-#include <os/os.h>
 
 using namespace rfb;
 
 const int MinKeyLength = 128;
 const int MaxKeyLength = 1024;
 
-CSecurityDH::CSecurityDH(CConnection* cc)
-  : CSecurity(cc), keyLength(0)
+CSecurityDH::CSecurityDH(CConnection* cc_)
+  : CSecurity(cc_), keyLength(0)
 {
   mpz_init(g);
   mpz_init(p);
@@ -86,9 +85,9 @@ bool CSecurityDH::readKey()
   uint16_t gen = is->readU16();
   keyLength = is->readU16();
   if (keyLength < MinKeyLength)
-    throw AuthFailureException("DH key is too short");
+    throw protocol_error("DH key is too short");
   if (keyLength > MaxKeyLength)
-    throw AuthFailureException("DH key is too long");
+    throw protocol_error("DH key is too long");
   if (!is->hasDataOrRestore(keyLength * 2))
     return false;
   is->clearRestorePoint();
@@ -108,11 +107,11 @@ void CSecurityDH::writeCredentials()
   std::string password;
   rdr::RandomStream rs;
 
-  (CSecurity::upg)->getUserPasswd(isSecure(), &username, &password);
+  cc->getUserPasswd(isSecure(), &username, &password);
 
   std::vector<uint8_t> bBytes(keyLength);
   if (!rs.hasData(keyLength))
-    throw ConnFailedException("failed to generate DH private key");
+    throw std::runtime_error("Failed to generate DH private key");
   rs.readBytes(bBytes.data(), bBytes.size());
   nettle_mpz_set_str_256_u(b, bBytes.size(), bBytes.data());
   mpz_powm(k, A, b, p);
@@ -130,17 +129,17 @@ void CSecurityDH::writeCredentials()
   struct aes128_ctx aesCtx;
   aes128_set_encrypt_key(&aesCtx, key);
 
-  char buf[128];
+  uint8_t buf[128];
   if (!rs.hasData(128))
-    throw ConnFailedException("failed to generate random padding");
+    throw std::runtime_error("Failed to generate random padding");
   rs.readBytes(buf, 128);
   if (username.size() >= 64)
-    throw AuthFailureException("username is too long");
+    throw std::out_of_range("Username is too long");
   memcpy(buf, username.c_str(), username.size() + 1);
   if (password.size() >= 64)
-    throw AuthFailureException("password is too long");
+    throw std::out_of_range("Password is too long");
   memcpy(buf + 64, password.c_str(), password.size() + 1);
-  aes128_encrypt(&aesCtx, 128, (uint8_t *)buf, (uint8_t *)buf);
+  aes128_encrypt(&aesCtx, 128, buf, buf);
 
   rdr::OutStream* os = cc->getOutStream();
   os->writeBytes(buf, 128);

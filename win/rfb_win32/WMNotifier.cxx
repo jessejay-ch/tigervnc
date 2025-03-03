@@ -22,19 +22,20 @@
 #include <config.h>
 #endif
 
+#include <core/LogWriter.h>
+
 #include <rfb_win32/WMNotifier.h>
 #include <rfb_win32/WMShatter.h>
 #include <rfb_win32/MsgWindow.h>
 
-#include <rfb/LogWriter.h>
-
+using namespace core;
 using namespace rfb;
 using namespace rfb::win32;
 
 static LogWriter vlog("WMMonitor");
 
 
-WMMonitor::WMMonitor() : MsgWindow("WMMonitor"), notifier(0) {
+WMMonitor::WMMonitor() : MsgWindow("WMMonitor"), notifier(nullptr) {
 }
 
 WMMonitor::~WMMonitor() {

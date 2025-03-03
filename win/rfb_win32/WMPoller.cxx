@@ -22,11 +22,13 @@
 #include <config.h>
 #endif
 
-#include <rfb_win32/WMPoller.h>
-#include <rfb/Exception.h>
-#include <rfb/LogWriter.h>
-#include <rfb/Configuration.h>
+#include <core/Configuration.h>
+#include <core/Exception.h>
+#include <core/LogWriter.h>
 
+#include <rfb_win32/WMPoller.h>
+
+using namespace core;
 using namespace rfb;
 using namespace rfb::win32;
 
@@ -57,7 +59,7 @@ bool
 rfb::win32::WMPoller::checkPollWindow(HWND w) {
   char buffer[128];
   if (!GetClassName(w, buffer, 128))
-    throw rdr::SystemException("unable to get window class:%u", GetLastError());
+    throw core::win32_error("Unable to get window class:%u", GetLastError());
   if ((strcmp(buffer, "tty") != 0) &&
     (strcmp(buffer, "ConsoleWindowClass") != 0)) {
     return false;
@@ -70,7 +72,7 @@ rfb::win32::WMPoller::pollWindow(HWND w, PollInfo* i) {
   RECT r;
   if (IsWindowVisible(w) && GetWindowRect(w, &r)) {
     if (IsRectEmpty(&r)) return;
-    Region wrgn(Rect(r.left, r.top, r.right, r.bottom));
+    Region wrgn({r.left, r.top, r.right, r.bottom});
     if (checkPollWindow(w)) {
       wrgn.assign_subtract(i->poll_exclude);
       i->poll_include.assign_union(wrgn);

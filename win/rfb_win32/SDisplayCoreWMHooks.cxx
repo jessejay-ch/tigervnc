@@ -22,9 +22,11 @@
 #include <config.h>
 #endif
 
-#include <rfb_win32/SDisplayCoreWMHooks.h>
-#include <rfb/LogWriter.h>
+#include <core/LogWriter.h>
 
+#include <rfb_win32/SDisplayCoreWMHooks.h>
+
+using namespace core;
 using namespace rfb;
 using namespace rfb::win32;
 
@@ -40,7 +42,7 @@ SDisplayCoreWMHooks::SDisplayCoreWMHooks(SDisplay* d, UpdateTracker* ut)
   consolePollTimer(getHandle(), consolePollTimerId),
   pollConsoles(false) {
   if (!hooks.setEvent(display->getUpdateEvent()))
-    throw rdr::Exception("hook subsystem failed to initialise");
+    throw std::runtime_error("Hook subsystem failed to initialise");
   poller.setUpdateTracker(updateTracker);
   cursorTimer.start(20);
   consolePollTimer.start(200);

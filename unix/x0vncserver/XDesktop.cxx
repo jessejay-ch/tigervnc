@@ -26,7 +26,13 @@
 #include <signal.h>
 #include <unistd.h>
 
-#include <rfb/LogWriter.h>
+#include <algorithm>
+
+#include <core/LogWriter.h>
+
+#include <network/Socket.h>
+
+#include <rfb/ScreenSet.h>
 
 #include <x0vncserver/XDesktop.h>
 
@@ -40,10 +46,10 @@
 #endif
 #ifdef HAVE_XFIXES
 #include <X11/extensions/Xfixes.h>
+#include <X11/Xatom.h>
 #endif
 #ifdef HAVE_XRANDR
 #include <X11/extensions/Xrandr.h>
-#include <rfb/Exception.h>
 #include <RandrGlue.h>
 extern "C" {
 void vncSetGlueContext(Display *dpy, void *res);
@@ -52,26 +58,27 @@ void vncSetGlueContext(Display *dpy, void *res);
 #include <x0vncserver/Geometry.h>
 #include <x0vncserver/XPixelBuffer.h>
 
-using namespace std;
-using namespace rfb;
-
 extern const unsigned short code_map_qnum_to_xorgevdev[];
 extern const unsigned int code_map_qnum_to_xorgevdev_len;
 
 extern const unsigned short code_map_qnum_to_xorgkbd[];
 extern const unsigned int code_map_qnum_to_xorgkbd_len;
 
-BoolParameter useShm("UseSHM", "Use MIT-SHM extension if available", true);
-BoolParameter rawKeyboard("RawKeyboard",
-                          "Send keyboard events straight through and "
-                          "avoid mapping them to the current keyboard "
-                          "layout", false);
-IntParameter queryConnectTimeout("QueryConnectTimeout",
-                                 "Number of seconds to show the Accept Connection dialog before "
-                                 "rejecting the connection",
-                                 10);
+core::BoolParameter
+  useShm("UseSHM", "Use MIT-SHM extension if available", true);
+core::BoolParameter
+  rawKeyboard("RawKeyboard",
+              "Send keyboard events straight through and avoid "
+              "mapping them to the current keyboard layout",
+              false);
+core::IntParameter
+  queryConnectTimeout("QueryConnectTimeout",
+                      "Number of seconds to show the 'Accept "
+                      "connection' dialog before rejecting the "
+                      "connection",
+                      10);
 
-static rfb::LogWriter vlog("XDesktop");
+static core::LogWriter vlog("XDesktop");
 
 // order is important as it must match RFB extension
 static const char * ledNames[XDESKTOP_N_LEDS] = {
@@ -79,11 +86,11 @@ static const char * ledNames[XDESKTOP_N_LEDS] = {
 };
 
 XDesktop::XDesktop(Display* dpy_, Geometry *geometry_)
-  : dpy(dpy_), geometry(geometry_), pb(0), server(0),
-    queryConnectDialog(0), queryConnectSock(0),
+  : dpy(dpy_), geometry(geometry_), pb(nullptr), server(nullptr),
+    queryConnectDialog(nullptr), queryConnectSock(nullptr), selection(dpy_, this),
     oldButtonMask(0), haveXtest(false), haveDamage(false),
     maxButtons(0), running(false), ledMasks(), ledState(0),
-    codeMap(0), codeMapLen(0)
+    codeMap(nullptr), codeMapLen(0)
 {
   int major, minor;
 
@@ -94,7 +101,7 @@ XDesktop::XDesktop(Display* dpy_, Geometry *geometry_)
   if (!XkbQueryExtension(dpy, &xkbOpcode, &xkbEventBase,
                          &xkbErrorBase, &major, &minor)) {
     vlog.error("XKEYBOARD extension not present");
-    throw Exception();
+    throw std::runtime_error("XKEYBOARD extension not present");
   }
 
   XkbSelectEvents(dpy, XkbUseCoreKbd, XkbIndicatorStateNotifyMask,
@@ -107,7 +114,7 @@ XDesktop::XDesktop(Display* dpy_, Geometry *geometry_)
     Bool on;
 
     a = XInternAtom(dpy, ledNames[i], True);
-    if (!a || !XkbGetNamedIndicator(dpy, a, &shift, &on, NULL, NULL))
+    if (!a || !XkbGetNamedIndicator(dpy, a, &shift, &on, nullptr, nullptr))
       continue;
 
     ledMasks[i] = 1u << shift;
@@ -178,10 +185,15 @@ XDesktop::XDesktop(Display* dpy_, Geometry *geometry_)
   if (XFixesQueryExtension(dpy, &xfixesEventBase, &xfixesErrorBase)) {
     XFixesSelectCursorInput(dpy, DefaultRootWindow(dpy),
                             XFixesDisplayCursorNotifyMask);
+
+    XFixesSelectSelectionInput(dpy, DefaultRootWindow(dpy), XA_PRIMARY,
+                               XFixesSetSelectionOwnerNotifyMask);
+    XFixesSelectSelectionInput(dpy, DefaultRootWindow(dpy), xaCLIPBOARD,
+                               XFixesSetSelectionOwnerNotifyMask);
   } else {
 #endif
     vlog.info("XFIXES extension not present");
-    vlog.info("Will not be able to display cursors");
+    vlog.info("Will not be able to display cursors or monitor clipboard");
 #ifdef HAVE_XFIXES
   }
 #endif
@@ -226,18 +238,22 @@ void XDesktop::poll() {
                       &x, &y, &wx, &wy, &mask)) {
       x -= geometry->offsetLeft();
       y -= geometry->offsetTop();
-      server->setCursorPos(rfb::Point(x, y), false);
+      server->setCursorPos({x, y}, false);
     }
   }
 }
 
+void XDesktop::init(rfb::VNCServer* vs)
+{
+  server = vs;
+}
 
-void XDesktop::start(VNCServer* vs) {
-
+void XDesktop::start()
+{
   // Determine actual number of buttons of the X pointer device.
-  unsigned char btnMap[8];
-  int numButtons = XGetPointerMapping(dpy, btnMap, 8);
-  maxButtons = (numButtons > 8) ? 8 : numButtons;
+  unsigned char btnMap[9];
+  int numButtons = XGetPointerMapping(dpy, btnMap, 9);
+  maxButtons = (numButtons > 9) ? 9 : numButtons;
   vlog.info("Enabling %d button%s of X pointer device",
             maxButtons, (maxButtons != 1) ? "s" : "");
 
@@ -248,7 +264,6 @@ void XDesktop::start(VNCServer* vs) {
   pb = new XPixelBuffer(dpy, factory, geometry->getRect());
   vlog.info("Allocated %s", pb->getImage()->classDesc());
 
-  server = vs;
   server->setPixelBuffer(pb, computeScreenLayout());
 
 #ifdef HAVE_XDAMAGE
@@ -277,8 +292,10 @@ void XDesktop::start(VNCServer* vs) {
 void XDesktop::stop() {
   running = false;
 
+#ifdef HAVE_XTEST
   // Delete added keycodes
-  deleteAddedKeysyms(dpy);
+  deleteAddedKeysyms();
+#endif
 
 #ifdef HAVE_XDAMAGE
   if (haveDamage)
@@ -286,13 +303,12 @@ void XDesktop::stop() {
 #endif
 
   delete queryConnectDialog;
-  queryConnectDialog = 0;
+  queryConnectDialog = nullptr;
 
-  server->setPixelBuffer(0);
-  server = 0;
+  server->setPixelBuffer(nullptr);
 
   delete pb;
-  pb = 0;
+  pb = nullptr;
 }
 
 void XDesktop::terminate() {
@@ -311,15 +327,13 @@ void XDesktop::queryConnection(network::Socket* sock,
   // Someone already querying?
   if (queryConnectSock) {
     std::list<network::Socket*> sockets;
-    std::list<network::Socket*>::iterator i;
 
     // Check if this socket is still valid
     server->getSockets(&sockets);
-    for (i = sockets.begin(); i != sockets.end(); i++) {
-      if (*i == queryConnectSock) {
-        server->approveConnection(sock, false, "Another connection is currently being queried.");
-        return;
-      }
+    if (std::find(sockets.begin(), sockets.end(),
+                  queryConnectSock) != sockets.end()) {
+      server->approveConnection(sock, false, "Another connection is currently being queried.");
+      return;
     }
   }
 
@@ -337,7 +351,9 @@ void XDesktop::queryConnection(network::Socket* sock,
   queryConnectDialog->map();
 }
 
-void XDesktop::pointerEvent(const Point& pos, int buttonMask) {
+void XDesktop::pointerEvent(const core::Point& pos,
+                            uint16_t buttonMask)
+{
 #ifdef HAVE_XTEST
   if (!haveXtest) return;
   XTestFakeMotionEvent(dpy, DefaultScreen(dpy),
@@ -356,11 +372,14 @@ void XDesktop::pointerEvent(const Point& pos, int buttonMask) {
     }
   }
   oldButtonMask = buttonMask;
+#else
+  (void)pos;
+  (void)buttonMask;
 #endif
 }
 
 #ifdef HAVE_XTEST
-KeyCode XDesktop::XkbKeysymToKeycode(Display* dpy, KeySym keysym) {
+KeyCode XDesktop::XkbKeysymToKeycode(KeySym keysym) {
   XkbDescPtr xkb;
   XkbStateRec state;
   unsigned int mods;
@@ -393,13 +412,49 @@ KeyCode XDesktop::XkbKeysymToKeycode(Display* dpy, KeySym keysym) {
   // Shift+Tab is usually ISO_Left_Tab, but RFB hides this fact. Do
   // another attempt if we failed the initial lookup
   if ((keycode == 0) && (keysym == XK_Tab) && (mods & ShiftMask))
-    return XkbKeysymToKeycode(dpy, XK_ISO_Left_Tab);
+    return XkbKeysymToKeycode(XK_ISO_Left_Tab);
 
   return keycode;
 }
-#endif
 
-KeyCode XDesktop::addKeysym(Display* dpy, KeySym keysym)
+/*
+ * Keeps the list in LRU order by moving the used key to front of the list.
+ */
+static void onKeyUsed(std::list<AddedKeySym> &list, KeyCode usedKeycode) {
+  if (list.empty() || list.front().keycode == usedKeycode)
+    return;
+
+  std::list<AddedKeySym>::iterator it = list.begin();
+  ++it;
+  for (; it != list.end(); ++it) {
+    AddedKeySym item = *it;
+    if (item.keycode == usedKeycode) {
+      list.erase(it);
+      list.push_front(item);
+      break;
+    }
+  }
+}
+
+/*
+ * Returns keycode of oldest item from list of manually added keysyms.
+ * The item is removed from the list.
+ * Returns 0 if no usable keycode is found.
+ */
+KeyCode XDesktop::getReusableKeycode(XkbDescPtr xkb) {
+  while (!addedKeysyms.empty()) {
+    AddedKeySym last = addedKeysyms.back();
+    addedKeysyms.pop_back();
+
+    // Make sure someone else hasn't modified the key
+    if (XkbKeyNumGroups(xkb, last.keycode) > 0 &&
+      XkbKeySymsPtr(xkb, last.keycode)[0] == last.keysym)
+      return last.keycode;
+  }
+  return 0;
+}
+
+KeyCode XDesktop::addKeysym(KeySym keysym)
 {
   int types[1];
   unsigned int key;
@@ -419,6 +474,9 @@ KeyCode XDesktop::addKeysym(Display* dpy, KeySym keysym)
   }
 
   if (key < xkb->min_key_code)
+    key = getReusableKeycode(xkb);
+
+  if (!key)
     return 0;
 
   memset(&changes, 0, sizeof(changes));
@@ -445,15 +503,16 @@ KeyCode XDesktop::addKeysym(Display* dpy, KeySym keysym)
   changes.num_key_syms = 1;
 
   if (XkbChangeMap(dpy, xkb, &changes)) {
-    vlog.info("Added unknown keysym %s to keycode %d", XKeysymToString(keysym), key);
-    addedKeysyms[keysym] = key;
+    vlog.info("Added unknown keysym XK_%s (0x%04x) to keycode %d",
+              XKeysymToString(keysym), (unsigned)keysym, key);
+    addedKeysyms.push_front({ syms[0], (KeyCode)key });
     return key;
   }
 
   return 0;
 }
 
-void XDesktop::deleteAddedKeysyms(Display* dpy) {
+void XDesktop::deleteAddedKeysyms() {
   XkbDescPtr xkb;
   xkb = XkbGetMap(dpy, XkbAllComponentsMask, XkbUseCoreKbd);
 
@@ -465,21 +524,17 @@ void XDesktop::deleteAddedKeysyms(Display* dpy) {
 
   KeyCode lowestKeyCode = xkb->max_key_code;
   KeyCode highestKeyCode = xkb->min_key_code;
-  std::map<KeySym, KeyCode>::iterator it;
-  for (it = addedKeysyms.begin(); it != addedKeysyms.end(); it++) {
-    if (XkbKeyNumGroups(xkb, it->second) != 0) {
-      // Check if we are removing keysym we added ourself
-      if (XkbKeysymToKeycode(dpy, it->first) != it->second)
-        continue;
+  KeyCode keyCode = getReusableKeycode(xkb);
+  while (keyCode != 0) {
+    XkbChangeTypesOfKey(xkb, keyCode, 0, XkbGroup1Mask, nullptr, &changes);
 
-      XkbChangeTypesOfKey(xkb, it->second, 0, XkbGroup1Mask, NULL, &changes);
+    if (keyCode < lowestKeyCode)
+      lowestKeyCode = keyCode;
 
-      if (it->second < lowestKeyCode)
-        lowestKeyCode = it->second;
+    if (keyCode > highestKeyCode)
+      highestKeyCode = keyCode;
 
-      if (it->second > highestKeyCode)
-        highestKeyCode = it->second;
-    }
+    keyCode = getReusableKeycode(xkb);
   }
 
   // Did we actually find something to remove?
@@ -490,29 +545,28 @@ void XDesktop::deleteAddedKeysyms(Display* dpy) {
   changes.first_key_sym = lowestKeyCode;
   changes.num_key_syms = highestKeyCode - lowestKeyCode + 1;
   XkbChangeMap(dpy, xkb, &changes);
-
-  addedKeysyms.clear();
 }
 
-KeyCode XDesktop::keysymToKeycode(Display* dpy, KeySym keysym) {
+KeyCode XDesktop::keysymToKeycode(KeySym keysym) {
   int keycode = 0;
 
   // XKeysymToKeycode() doesn't respect state, so we have to use
   // something slightly more complex
-  keycode = XkbKeysymToKeycode(dpy, keysym);
+  keycode = XkbKeysymToKeycode(keysym);
 
   if (keycode != 0)
     return keycode;
 
   // TODO: try to further guess keycode with all possible mods as Xvnc does
 
-  keycode = addKeysym(dpy, keysym);
+  keycode = addKeysym(keysym);
 
   if (keycode == 0)
     vlog.error("Failure adding new keysym 0x%lx", keysym);
 
   return keycode;
 }
+#endif
 
 
 void XDesktop::keyEvent(uint32_t keysym, uint32_t xtcode, bool down) {
@@ -530,7 +584,7 @@ void XDesktop::keyEvent(uint32_t keysym, uint32_t xtcode, bool down) {
     if (pressedKeys.find(keysym) != pressedKeys.end())
       keycode = pressedKeys[keysym];
     else {
-      keycode = keysymToKeycode(dpy, keysym);
+      keycode = keysymToKeycode(keysym);
     }
   }
 
@@ -544,18 +598,22 @@ void XDesktop::keyEvent(uint32_t keysym, uint32_t xtcode, bool down) {
   else
     pressedKeys.erase(keysym);
 
+  if (down)
+    onKeyUsed(addedKeysyms, keycode);
+
   vlog.debug("%d %s", keycode, down ? "down" : "up");
 
   XTestFakeKeyEvent(dpy, keycode, down, CurrentTime);
+#else
+  (void)keysym;
+  (void)xtcode;
+  (void)down;
 #endif
 }
 
-void XDesktop::clientCutText(const char* /*str*/) {
-}
-
-ScreenSet XDesktop::computeScreenLayout()
+rfb::ScreenSet XDesktop::computeScreenLayout()
 {
-  ScreenSet layout;
+  rfb::ScreenSet layout;
   char buffer[2048];
 
 #ifdef HAVE_XRANDR
@@ -570,8 +628,8 @@ ScreenSet XDesktop::computeScreenLayout()
   XRRFreeScreenResources(res);
 
   // Adjust the layout relative to the geometry
-  ScreenSet::iterator iter, iter_next;
-  Point offset(-geometry->offsetLeft(), -geometry->offsetTop());
+  rfb::ScreenSet::iterator iter, iter_next;
+  core::Point offset(-geometry->offsetLeft(), -geometry->offsetTop());
   for (iter = layout.begin();iter != layout.end();iter = iter_next) {
     iter_next = iter; ++iter_next;
     iter->dimensions = iter->dimensions.intersect(geometry->getRect());
@@ -653,9 +711,9 @@ unsigned int XDesktop::setScreenLayout(int fb_width, int fb_height,
   } else {
     vlog.debug("Impossible layout - trying to adjust");
 
-    ScreenSet::const_iterator firstscreen = layout.begin();
+    rfb::ScreenSet::const_iterator firstscreen = layout.begin();
     adjustedLayout.add_screen(*firstscreen);
-    ScreenSet::iterator iter = adjustedLayout.begin();
+    rfb::ScreenSet::iterator iter = adjustedLayout.begin();
     RROutput outputId = None;
 
     for (int i = 0;i < vncRandRGetOutputCount();i++) {
@@ -779,6 +837,9 @@ unsigned int XDesktop::setScreenLayout(int fb_width, int fb_height,
   return ret;
 
 #else
+  (void)fb_width;
+  (void)fb_height;
+  (void)layout;
   return rfb::resultProhibited;
 #endif /* HAVE_XRANDR */
 }
@@ -806,15 +867,15 @@ bool XDesktop::handleGlobalEvent(XEvent* ev) {
 #ifdef HAVE_XDAMAGE
   } else if (ev->type == xdamageEventBase) {
     XDamageNotifyEvent* dev;
-    Rect rect;
+    core::Rect rect;
 
     if (!running)
       return true;
 
     dev = (XDamageNotifyEvent*)ev;
     rect.setXYWH(dev->area.x, dev->area.y, dev->area.width, dev->area.height);
-    rect = rect.translate(Point(-geometry->offsetLeft(),
-                                -geometry->offsetTop()));
+    rect = rect.translate({-geometry->offsetLeft(),
+                           -geometry->offsetTop()});
     server->add_changed(rect);
 
     return true;
@@ -841,6 +902,20 @@ bool XDesktop::handleGlobalEvent(XEvent* ev) {
       return false;
 
     return setCursor();
+  }
+  else if (ev->type == xfixesEventBase + XFixesSelectionNotify) {
+    XFixesSelectionNotifyEvent* sev = (XFixesSelectionNotifyEvent*)ev;
+
+    if (!running)
+      return true;
+
+    if (sev->subtype != XFixesSetSelectionOwnerNotify)
+      return false;
+
+    selection.handleSelectionOwnerChange(sev->owner, sev->selection,
+                                         sev->timestamp);
+
+    return true;
 #endif
 #ifdef HAVE_XRANDR
   } else if (ev->type == Expose) {
@@ -871,7 +946,7 @@ bool XDesktop::handleGlobalEvent(XEvent* ev) {
       server->setPixelBuffer(pb, computeScreenLayout());
 
       // Mark entire screen as changed
-      server->add_changed(rfb::Region(Rect(0, 0, cev->width, cev->height)));
+      server->add_changed({{0, 0, cev->width, cev->height}});
     }
 
     return true;
@@ -916,7 +991,7 @@ bool XDesktop::handleGlobalEvent(XEvent* ev) {
     if (cev->window == cev->root)
       return false;
 
-    server->setCursor(0, 0, Point(), NULL);
+    server->setCursor(0, 0, {}, nullptr);
     return true;
 #endif
   }
@@ -927,8 +1002,8 @@ bool XDesktop::handleGlobalEvent(XEvent* ev) {
 void XDesktop::queryApproved()
 {
   assert(isRunning());
-  server->approveConnection(queryConnectSock, true, 0);
-  queryConnectSock = 0;
+  server->approveConnection(queryConnectSock, true, nullptr);
+  queryConnectSock = nullptr;
 }
 
 void XDesktop::queryRejected()
@@ -936,15 +1011,16 @@ void XDesktop::queryRejected()
   assert(isRunning());
   server->approveConnection(queryConnectSock, false,
                             "Connection rejected by local user");
-  queryConnectSock = 0;
+  queryConnectSock = nullptr;
 }
 
+#ifdef HAVE_XFIXES
 bool XDesktop::setCursor()
 {
   XFixesCursorImage *cim;
 
   cim = XFixesGetCursorImage(dpy);
-  if (cim == NULL)
+  if (cim == nullptr)
     return false;
 
   // Copied from XserverDesktop::setCursor() in
@@ -976,13 +1052,39 @@ bool XDesktop::setCursor()
   }
 
   try {
-    server->setCursor(cim->width, cim->height, Point(cim->xhot, cim->yhot),
+    server->setCursor(cim->width, cim->height, {cim->xhot, cim->yhot},
                       cursorData);
-  } catch (rdr::Exception& e) {
-    vlog.error("XserverDesktop::setCursor: %s",e.str());
+  } catch (std::exception& e) {
+    vlog.error("XserverDesktop::setCursor: %s",e.what());
   }
 
   delete [] cursorData;
   XFree(cim);
   return true;
+}
+#endif
+
+// X selection availability changed, let VNC clients know
+void XDesktop::handleXSelectionAnnounce(bool available) {
+  server->announceClipboard(available);
+}
+
+// A VNC client wants data, send request to selection owner
+void XDesktop::handleClipboardRequest() { 
+  selection.requestSelectionData(); 
+}
+
+// Data is available, send it to clients
+void XDesktop::handleXSelectionData(const char* data) {
+  server->sendClipboardData(data);
+}
+
+// When a client says it has clipboard data, request it 
+void XDesktop::handleClipboardAnnounce(bool available) {
+   if(available) server->requestClipboard();
+}
+
+// Client has sent the data
+void XDesktop::handleClipboardData(const char* data) {
+  if (data) selection.handleClientClipboardData(data);
 }

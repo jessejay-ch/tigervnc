@@ -22,9 +22,11 @@
 #include <config.h>
 #endif
 
+#include <stdexcept>
+
+#include <core/Rect.h>
+
 #include <rfb/JpegCompressor.h>
-#include <rdr/Exception.h>
-#include <rfb/Rect.h>
 #include <rfb/PixelFormat.h>
 #include <rfb/ClientParams.h>
 
@@ -127,7 +129,7 @@ JpegCompressor::JpegCompressor(int bufferLen) : MemOutStream(bufferLen)
 
   if(setjmp(err->jmpBuffer)) {
     // this will execute if libjpeg has an error
-    throw rdr::Exception("%s", err->lastError);
+    throw std::runtime_error(err->lastError);
   }
 
   jpeg_create_compress(cinfo);
@@ -156,22 +158,23 @@ JpegCompressor::~JpegCompressor(void)
 }
 
 void JpegCompressor::compress(const uint8_t *buf, volatile int stride,
-                              const Rect& r, const PixelFormat& pf,
+                              const core::Rect& r,
+                              const PixelFormat& pf,
                               int quality, int subsamp)
 {
   int w = r.width();
   int h = r.height();
   int pixelsize;
-  uint8_t * volatile srcBuf = NULL;
+  uint8_t * volatile srcBuf = nullptr;
   volatile bool srcBufIsTemp = false;
-  JSAMPROW * volatile rowPointer = NULL;
+  JSAMPROW * volatile rowPointer = nullptr;
 
   if(setjmp(err->jmpBuffer)) {
     // this will execute if libjpeg has an error
     jpeg_abort_compress(cinfo);
     if (srcBufIsTemp && srcBuf) delete[] srcBuf;
     if (rowPointer) delete[] rowPointer;
-    throw rdr::Exception("%s", err->lastError);
+    throw std::runtime_error(err->lastError);
   }
 
   cinfo->image_width = w;
@@ -254,7 +257,7 @@ void JpegCompressor::compress(const uint8_t *buf, volatile int stride,
   delete[] rowPointer;
 }
 
-void JpegCompressor::writeBytes(const void* /*data*/, int /*length*/)
+void JpegCompressor::writeBytes(const uint8_t* /*data*/, int /*length*/)
 {
-  throw rdr::Exception("writeBytes() is not valid with a JpegCompressor instance.  Use compress() instead.");
+  throw std::logic_error("writeBytes() is not valid with a JpegCompressor instance.  Use compress() instead.");
 }

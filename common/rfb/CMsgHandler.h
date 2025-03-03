@@ -27,47 +27,54 @@
 #include <stdint.h>
 
 #include <rfb/ServerParams.h>
-#include <rfb/Rect.h>
-#include <rfb/ScreenSet.h>
+
+namespace core {
+  struct Point;
+  struct Rect;
+}
 
 namespace rdr { class InStream; }
 
 namespace rfb {
+
+  class ModifiablePixelBuffer;
+  struct ScreenSet;
 
   class CMsgHandler {
   public:
     CMsgHandler();
     virtual ~CMsgHandler();
 
-    // The following methods are called as corresponding messages are read.  A
-    // derived class should override these methods as desired.  Note that for
-    // the setDesktopSize(), setExtendedDesktopSize(), setPixelFormat(),
-    // setName(), serverInit() and clipboardCaps methods, a derived class
-    // should call on to CMsgHandler's methods to set the members of "server"
-    // appropriately.
+    // The following methods are called as corresponding messages are
+    // read.  A derived class should override these methods as desired.
+    // Note that for the setDesktopSize(), setExtendedDesktopSize(),
+    // setName(), serverInit() and handleClipboardCaps() methods, a
+    // derived class should call on to CMsgHandler's methods to set the
+    // members of "server" appropriately.
 
     virtual void setDesktopSize(int w, int h);
     virtual void setExtendedDesktopSize(unsigned reason, unsigned result,
                                         int w, int h,
                                         const ScreenSet& layout);
-    virtual void setCursor(int width, int height, const Point& hotspot,
+    virtual void setCursor(int width, int height, const
+                           core::Point& hotspot,
                            const uint8_t* data) = 0;
-    virtual void setCursorPos(const Point& pos) = 0;
-    virtual void setPixelFormat(const PixelFormat& pf);
+    virtual void setCursorPos(const core::Point& pos) = 0;
     virtual void setName(const char* name);
-    virtual void fence(uint32_t flags, unsigned len, const char data[]);
+    virtual void fence(uint32_t flags, unsigned len, const uint8_t data[]);
     virtual void endOfContinuousUpdates();
     virtual void supportsQEMUKeyEvent();
+    virtual void supportsExtendedMouseButtons();
     virtual void serverInit(int width, int height,
                             const PixelFormat& pf,
                             const char* name) = 0;
 
-    virtual bool readAndDecodeRect(const Rect& r, int encoding,
+    virtual bool readAndDecodeRect(const core::Rect& r, int encoding,
                                    ModifiablePixelBuffer* pb) = 0;
 
     virtual void framebufferUpdateStart();
     virtual void framebufferUpdateEnd();
-    virtual bool dataRect(const Rect& r, int encoding) = 0;
+    virtual bool dataRect(const core::Rect& r, int encoding) = 0;
 
     virtual void setColourMapEntries(int firstColour, int nColours,
 				     uint16_t* rgbs) = 0;

@@ -24,7 +24,8 @@
 
 #include <errno.h>
 
-#include <rdr/Exception.h>
+#include <core/Exception.h>
+
 #include <rdr/FileInStream.h>
 
 using namespace rdr;
@@ -33,13 +34,13 @@ FileInStream::FileInStream(const char *fileName)
 {
   file = fopen(fileName, "rb");
   if (!file)
-    throw SystemException("fopen", errno);
+    throw core::posix_error("fopen", errno);
 }
 
 FileInStream::~FileInStream(void) {
   if (file) {
     fclose(file);
-    file = NULL;
+    file = nullptr;
   }
 }
 
@@ -48,9 +49,9 @@ bool FileInStream::fillBuffer()
   size_t n = fread((uint8_t*)end, 1, availSpace(), file);
   if (n == 0) {
     if (ferror(file))
-      throw SystemException("fread", errno);
+      throw core::posix_error("fread", errno);
     if (feof(file))
-      throw EndOfStream();
+      throw end_of_stream();
     return false;
   }
   end += n;

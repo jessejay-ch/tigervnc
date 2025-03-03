@@ -25,6 +25,10 @@
 
 #include <vector>
 
+#include <core/Configuration.h>
+#include <core/LogWriter.h>
+#include <core/string.h>
+
 #include <rdr/InStream.h>
 #include <rdr/ZlibInStream.h>
 
@@ -32,17 +36,16 @@
 #include <rfb/qemuTypes.h>
 #include <rfb/clipboardTypes.h>
 #include <rfb/Exception.h>
+#include <rfb/PixelFormat.h>
+#include <rfb/ScreenSet.h>
 #include <rfb/SMsgHandler.h>
 #include <rfb/SMsgReader.h>
-#include <rfb/Configuration.h>
-#include <rfb/LogWriter.h>
-#include <rfb/util.h>
 
 using namespace rfb;
 
-static LogWriter vlog("SMsgReader");
+static core::LogWriter vlog("SMsgReader");
 
-static IntParameter maxCutText("MaxCutText", "Maximum permitted length of an incoming clipboard update", 256*1024);
+static core::IntParameter maxCutText("MaxCutText", "Maximum permitted length of an incoming clipboard update", 256*1024);
 
 SMsgReader::SMsgReader(SMsgHandler* handler_, rdr::InStream* is_)
   : handler(handler_), is(is_), state(MSGSTATE_IDLE)
@@ -106,8 +109,8 @@ bool SMsgReader::readMsg()
     ret = readQEMUMessage();
     break;
   default:
-    vlog.error("unknown message type %d", currentMsgType);
-    throw Exception("unknown message type");
+    vlog.error("Unknown message type %d", currentMsgType);
+    throw protocol_error("Unknown message type");
   }
 
   if (ret)
@@ -201,7 +204,7 @@ bool SMsgReader::readFramebufferUpdateRequest()
   int y = is->readU16();
   int w = is->readU16();
   int h = is->readU16();
-  handler->framebufferUpdateRequest(Rect(x, y, x+w, y+h), inc);
+  handler->framebufferUpdateRequest({x, y, x+w, y+h}, inc);
   return true;
 }
 
@@ -229,7 +232,7 @@ bool SMsgReader::readFence()
 {
   uint32_t flags;
   uint8_t len;
-  char data[64];
+  uint8_t data[64];
 
   if (!is->hasData(3 + 4 + 1))
     return false;
@@ -272,12 +275,33 @@ bool SMsgReader::readKeyEvent()
 
 bool SMsgReader::readPointerEvent()
 {
+  int mask;
+  int x;
+  int y;
+
   if (!is->hasData(1 + 2 + 2))
     return false;
-  int mask = is->readU8();
-  int x = is->readU16();
-  int y = is->readU16();
-  handler->pointerEvent(Point(x, y), mask);
+
+  is->setRestorePoint();
+
+  mask = is->readU8();
+  x = is->readU16();
+  y = is->readU16();
+
+  if (handler->client.supportsExtendedMouseButtons() && mask & 0x80 ) {
+    int highBits;
+    int lowBits;
+
+    if (!is->hasDataOrRestore(1))
+      return false;
+
+    highBits = is->readU8();
+    lowBits = mask & 0x7f; /* Clear marker bit */
+    mask = (highBits << 7) | lowBits;
+  }
+
+  is->clearRestorePoint();
+  handler->pointerEvent({x, y}, mask);
   return true;
 }
 
@@ -315,8 +339,11 @@ bool SMsgReader::readClientCutText()
   }
 
   std::vector<char> ca(len);
-  is->readBytes(ca.data(), len);
-  std::string filtered(convertLF(ca.data(), len));
+  is->readBytes((uint8_t*)ca.data(), len);
+
+  std::string utf8(core::latin1ToUTF8(ca.data(), ca.size()));
+  std::string filtered(core::convertLF(utf8.data(), utf8.size()));
+
   handler->clientCutText(filtered.c_str());
 
   return true;
@@ -331,7 +358,7 @@ bool SMsgReader::readExtendedClipboard(int32_t len)
     return false;
 
   if (len < 4)
-    throw Exception("Invalid extended clipboard message");
+    throw protocol_error("Invalid extended clipboard message");
   if (len > maxCutText) {
     vlog.error("Extended clipboard message too long (%d bytes) - ignoring", len);
     is->skip(len);
@@ -353,7 +380,7 @@ bool SMsgReader::readExtendedClipboard(int32_t len)
     }
 
     if (len < (int32_t)(4 + 4*num))
-      throw Exception("Invalid extended clipboard message");
+      throw protocol_error("Invalid extended clipboard message");
 
     num = 0;
     for (i = 0;i < 16;i++) {
@@ -378,7 +405,7 @@ bool SMsgReader::readExtendedClipboard(int32_t len)
         continue;
 
       if (!zis.hasData(4))
-        throw Exception("Extended clipboard decode error");
+        throw protocol_error("Extended clipboard decode error");
 
       lengths[num] = zis.readU32();
 
@@ -391,7 +418,7 @@ bool SMsgReader::readExtendedClipboard(int32_t len)
           size_t chunk;
 
           if (!zis.hasData(1))
-            throw Exception("Extended clipboard decode error");
+            throw protocol_error("Extended clipboard decode error");
 
           chunk = zis.avail();
           if (chunk > lengths[num])
@@ -407,7 +434,7 @@ bool SMsgReader::readExtendedClipboard(int32_t len)
       }
 
       if (!zis.hasData(lengths[num]))
-        throw Exception("Extended clipboard decode error");
+        throw protocol_error("Extended clipboard decode error");
 
       buffers[num] = new uint8_t[lengths[num]];
       zis.readBytes(buffers[num], lengths[num]);
@@ -415,7 +442,7 @@ bool SMsgReader::readExtendedClipboard(int32_t len)
     }
 
     zis.flushUnderlying();
-    zis.setUnderlying(NULL, 0);
+    zis.setUnderlying(nullptr, 0);
 
     handler->handleClipboardProvide(flags, lengths, buffers);
 
@@ -437,7 +464,7 @@ bool SMsgReader::readExtendedClipboard(int32_t len)
       handler->handleClipboardNotify(flags);
       break;
     default:
-      throw Exception("Invalid extended clipboard action");
+      throw protocol_error("Invalid extended clipboard action");
     }
   }
 
@@ -461,7 +488,7 @@ bool SMsgReader::readQEMUMessage()
     ret = readQEMUKeyEvent();
     break;
   default:
-    throw Exception("unknown QEMU submessage type %d", subType);
+    throw protocol_error(core::format("Unknown QEMU submessage type %d", subType));
   }
 
   if (!ret) {

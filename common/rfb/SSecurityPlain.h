@@ -20,10 +20,8 @@
 #ifndef __RFB_SSECURITYPLAIN_H__
 #define __RFB_SSECURITYPLAIN_H__
 
-#include <rfb/SConnection.h>
+#include <rfb/Security.h>
 #include <rfb/SSecurity.h>
-#include <rfb/SSecurityVeNCrypt.h>
-#include <rfb/Configuration.h>
 
 namespace rfb {
 
@@ -31,7 +29,7 @@ namespace rfb {
   public:
     bool validate(SConnection* sc, const char *username, const char *password)
       { return validUser(username) ? validateInternal(sc, username, password) : false; }
-    static StringParameter plainUsers;
+    static core::StringParameter plainUsers;
 
     virtual ~PasswordValidator() { }
 
@@ -43,9 +41,9 @@ namespace rfb {
   class SSecurityPlain : public SSecurity {
   public:
     SSecurityPlain(SConnection* sc);
-    virtual bool processMsg();
-    virtual int getType() const { return secTypePlain; };
-    virtual const char* getUserName() const { return username; }
+    bool processMsg() override;
+    int getType() const override { return secTypePlain; };
+    const char* getUserName() const override { return username; }
 
     virtual ~SSecurityPlain() { }
 

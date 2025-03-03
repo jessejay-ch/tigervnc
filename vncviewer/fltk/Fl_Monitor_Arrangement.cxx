@@ -61,7 +61,6 @@ static const Fl_Boxtype FL_CHECKERED_BOX = FL_FREE_BOXTYPE;
 Fl_Monitor_Arrangement::Fl_Monitor_Arrangement(
    int x, int y, int w, int h)
 :  Fl_Group(x, y, w, h),
-   SELECTION_COLOR(fl_lighter(FL_BLUE)),
    AVAILABLE_COLOR(fl_lighter(fl_lighter(fl_lighter(FL_BACKGROUND_COLOR))))
 {
   // Used for required monitors.
@@ -124,11 +123,11 @@ void Fl_Monitor_Arrangement::draw()
 
     if (is_required(iter->first)) {
       monitor->box(FL_CHECKERED_BOX);
-      monitor->color(SELECTION_COLOR);
+      monitor->color(FL_SELECTION_COLOR);
     } else {
       monitor->box(FL_BORDER_BOX);
       monitor->color(AVAILABLE_COLOR);
-      monitor->selection_color(SELECTION_COLOR);
+      monitor->selection_color(FL_SELECTION_COLOR);
     }
   }
 
@@ -380,7 +379,7 @@ std::string Fl_Monitor_Arrangement::get_monitor_name(int m)
 
   Fl::screen_xywh(x, y, w, h, m);
 
-  EnumDisplayMonitors(NULL, NULL, EnumDisplayMonitorsCallback,
+  EnumDisplayMonitors(nullptr, nullptr, EnumDisplayMonitorsCallback,
                       (LPARAM)&sys_monitors);
 
   for (iter = sys_monitors.begin(); iter != sys_monitors.end(); ++iter) {
@@ -442,11 +441,11 @@ std::string Fl_Monitor_Arrangement::get_monitor_name(int m)
 
   info = IODisplayCreateInfoDictionary(CGDisplayIOServicePort(displayID),
                                        kIODisplayOnlyPreferredName);
-  if (info == NULL)
+  if (info == nullptr)
     return "";
 
   dict = (CFDictionaryRef) CFDictionaryGetValue(info, CFSTR(kDisplayProductName));
-  if (dict == NULL) {
+  if (dict == nullptr) {
     CFRelease(info);
     return "";
   }
@@ -455,7 +454,7 @@ std::string Fl_Monitor_Arrangement::get_monitor_name(int m)
 
   if (dict_len > 0) {
     CFTypeRef * names = new CFTypeRef[dict_len];
-    CFDictionaryGetKeysAndValues(dict, NULL, (const void **) names);
+    CFDictionaryGetKeysAndValues(dict, nullptr, (const void **) names);
 
     if (names[0]) {
 
@@ -497,7 +496,7 @@ std::string Fl_Monitor_Arrangement::get_monitor_name(int m)
   std::string name;
 
   fl_open_display();
-  assert(fl_display != NULL);
+  assert(fl_display != nullptr);
   Fl::screen_xywh(x, y, w, h, m);
 
   if (!XQueryExtension(fl_display, "RANDR", &xi_major, &ev, &err))

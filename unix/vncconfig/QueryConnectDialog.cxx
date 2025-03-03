@@ -21,16 +21,18 @@
 #endif
 
 #include <stdio.h>
-#include <rdr/Exception.h>
+
+#include <algorithm>
+
 #include "QueryConnectDialog.h"
 #include "vncExt.h"
 
-QueryConnectDialog::QueryConnectDialog(Display* dpy,
+QueryConnectDialog::QueryConnectDialog(Display* dpy_,
                                        const char* address_,
                                        const char* user_,
                                        int timeout_,
                                        QueryResultCallback* cb)
-  : TXDialog(dpy, 300, 100, "VNC Server : Accept Connection?"),
+  : TXDialog(dpy_, 300, 100, "VNC server : Accept connection?"),
     addressLbl(dpy, "Host:",this),
     address(dpy, address_, this),
     userLbl(dpy, "User:", this),
@@ -43,7 +45,7 @@ QueryConnectDialog::QueryConnectDialog(Display* dpy,
 {
   const int pad = 4;
   int y=pad;
-  int lblWidth = __rfbmax(addressLbl.width(), userLbl.width());
+  int lblWidth = std::max(addressLbl.width(), userLbl.width());
   userLbl.move(pad+lblWidth-userLbl.width(), y);
   user.move(pad+lblWidth, y);
   addressLbl.move(pad+lblWidth-addressLbl.width(), y+=userLbl.height());
@@ -51,9 +53,9 @@ QueryConnectDialog::QueryConnectDialog(Display* dpy,
   timeoutLbl.move(pad, y+=addressLbl.height());
   timeout.move(pad+timeoutLbl.width(), y);
   accept.move(pad, y+=addressLbl.height());
-  int maxWidth = __rfbmax(user.width(), address.width()+pad+lblWidth);
-  maxWidth = __rfbmax(maxWidth, accept.width()*3);
-  maxWidth = __rfbmax(maxWidth, timeoutLbl.width()+timeout.width()+pad);
+  int maxWidth = std::max(user.width(), address.width()+pad+lblWidth);
+  maxWidth = std::max(maxWidth, accept.width()*3);
+  maxWidth = std::max(maxWidth, timeoutLbl.width()+timeout.width()+pad);
   reject.move(maxWidth-reject.width(), y);
   resize(maxWidth + pad, y+reject.height()+pad);
   setBorderWidth(1);
@@ -74,14 +76,14 @@ void QueryConnectDialog::buttonActivate(TXButton* b) {
     callback->queryRejected();
 }
   
-bool QueryConnectDialog::handleTimeout(rfb::Timer* /*t*/) {
+void QueryConnectDialog::handleTimeout(core::Timer* t)
+{
   if (timeUntilReject-- == 0) {
     unmap();
     callback->queryTimedOut();
-    return false;
   } else {
     refreshTimeout();
-    return true;
+    t->repeat();
   }
 }
 

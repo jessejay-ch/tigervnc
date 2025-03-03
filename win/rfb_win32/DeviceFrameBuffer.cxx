@@ -27,12 +27,16 @@
 #endif
 
 #include <vector>
+
+#include <core/LogWriter.h>
+
 #include <rfb_win32/DeviceFrameBuffer.h>
 #include <rfb_win32/DeviceContext.h>
 #include <rfb_win32/IconInfo.h>
-#include <rfb/VNCServer.h>
-#include <rfb/LogWriter.h>
 
+#include <rfb/VNCServer.h>
+
+using namespace core;
 using namespace rfb;
 using namespace win32;
 
@@ -54,14 +58,14 @@ DeviceFrameBuffer::DeviceFrameBuffer(HDC deviceContext, const Rect& wRect)
 
   int capabilities = GetDeviceCaps(device, RASTERCAPS);
   if (!(capabilities & RC_BITBLT)) {
-    throw Exception("device does not support BitBlt");
+    throw std::invalid_argument("Device does not support BitBlt");
   }
   if (!(capabilities & RC_DI_BITMAP)) {
-    throw Exception("device does not support GetDIBits");
+    throw std::invalid_argument("Device does not support GetDIBits");
   }
   /*
   if (GetDeviceCaps(device, PLANES) != 1) {
-    throw Exception("device does not support planar displays");
+    throw std::invalid_argument("Device does not support planar displays");
   }
   */
 
@@ -102,7 +106,7 @@ DeviceFrameBuffer::grabRect(const Rect &rect) {
     if (ignoreGrabErrors)
       vlog.error("BitBlt failed:%ld", GetLastError());
     else
-      throw rdr::SystemException("BitBlt failed", GetLastError());
+      throw core::win32_error("BitBlt failed", GetLastError());
   }
 }
 
@@ -122,8 +126,8 @@ void DeviceFrameBuffer::setCursor(HCURSOR hCursor, VNCServer* server)
 {
   // - If hCursor is null then there is no cursor - clear the old one
 
-  if (hCursor == 0) {
-    server->setCursor(0, 0, Point(), NULL);
+  if (hCursor == nullptr) {
+    server->setCursor(0, 0, {}, nullptr);
     return;
   }
 
@@ -138,11 +142,11 @@ void DeviceFrameBuffer::setCursor(HCURSOR hCursor, VNCServer* server)
 
     BITMAP maskInfo;
     if (!GetObject(iconInfo.hbmMask, sizeof(BITMAP), &maskInfo))
-      throw rdr::SystemException("GetObject() failed", GetLastError());
+      throw core::win32_error("GetObject() failed", GetLastError());
     if (maskInfo.bmPlanes != 1)
-      throw rdr::Exception("unsupported multi-plane cursor");
+      throw std::invalid_argument("Unsupported multi-plane cursor");
     if (maskInfo.bmBitsPixel != 1)
-      throw rdr::Exception("unsupported cursor mask format");
+      throw std::invalid_argument("Unsupported cursor mask format");
 
     width = maskInfo.bmWidth;
     height = maskInfo.bmHeight;
@@ -151,7 +155,7 @@ void DeviceFrameBuffer::setCursor(HCURSOR hCursor, VNCServer* server)
 
     buffer.resize(width * height * 4);
 
-    Point hotspot = Point(iconInfo.xHotspot, iconInfo.yHotspot);
+    Point hotspot(iconInfo.xHotspot, iconInfo.yHotspot);
 
     if (iconInfo.hbmColor) {
       // Colour cursor
@@ -174,7 +178,7 @@ void DeviceFrameBuffer::setCursor(HCURSOR hCursor, VNCServer* server)
 
       if (!GetDIBits(dc, iconInfo.hbmColor, 0, height,
                      buffer.data(), (LPBITMAPINFO)&bi, DIB_RGB_COLORS))
-        throw rdr::SystemException("GetDIBits", GetLastError());
+        throw core::win32_error("GetDIBits", GetLastError());
 
       // We may not get the RGBA order we want, so shuffle things around
       int ridx, gidx, bidx, aidx;
@@ -188,7 +192,7 @@ void DeviceFrameBuffer::setCursor(HCURSOR hCursor, VNCServer* server)
       if ((bi.bV5RedMask != ((unsigned)0xff << ridx*8)) ||
           (bi.bV5GreenMask != ((unsigned)0xff << gidx*8)) ||
           (bi.bV5BlueMask != ((unsigned)0xff << bidx*8)))
-        throw rdr::Exception("unsupported cursor colour format");
+        throw std::invalid_argument("Unsupported cursor colour format");
 
       uint8_t* rwbuffer = buffer.data();
       for (int y = 0; y < height; y++) {
@@ -217,25 +221,25 @@ void DeviceFrameBuffer::setCursor(HCURSOR hCursor, VNCServer* server)
 
       if (!GetBitmapBits(iconInfo.hbmMask,
                          maskInfo.bmWidthBytes * maskInfo.bmHeight, mask.data()))
-        throw rdr::SystemException("GetBitmapBits", GetLastError());
+        throw core::win32_error("GetBitmapBits", GetLastError());
 
       bool doOutline = false;
       uint8_t* rwbuffer = buffer.data();
       for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
-          int byte = y * maskInfo.bmWidthBytes + x / 8;
+          int byte_ = y * maskInfo.bmWidthBytes + x / 8;
           int bit = 7 - x % 8;
 
-          if (!(andMask[byte] & (1 << bit))) {
+          if (!(andMask[byte_] & (1 << bit))) {
             // Valid pixel, so make it opaque
             rwbuffer[3] = 0xff;
 
             // Black or white?
-            if (xorMask[byte] & (1 << bit))
+            if (xorMask[byte_] & (1 << bit))
               rwbuffer[0] = rwbuffer[1] = rwbuffer[2] = 0xff;
             else
               rwbuffer[0] = rwbuffer[1] = rwbuffer[2] = 0;
-          } else if (xorMask[byte] & (1 << bit)) {
+          } else if (xorMask[byte_] & (1 << bit)) {
             // Replace any XORed pixels with black, because RFB doesn't support
             // XORing of cursors.  XORing is used for the I-beam cursor, which is most
             // often used over a white background, but also sometimes over a black
@@ -256,7 +260,7 @@ void DeviceFrameBuffer::setCursor(HCURSOR hCursor, VNCServer* server)
       }
 
       if (doOutline) {
-        vlog.debug("drawing cursor outline!");
+        vlog.debug("Drawing cursor outline!");
 
         // The buffer needs to be slightly larger to make sure there
         // is room for the outline pixels
@@ -308,7 +312,7 @@ void DeviceFrameBuffer::setCursor(HCURSOR hCursor, VNCServer* server)
 
     server->setCursor(width, height, hotspot, buffer.data());
 
-  } catch (rdr::Exception& e) {
-    vlog.error("%s", e.str());
+  } catch (std::exception& e) {
+    vlog.error("%s", e.what());
   }
 }

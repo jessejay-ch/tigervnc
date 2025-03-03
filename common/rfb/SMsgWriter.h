@@ -25,8 +25,7 @@
 
 #include <stdint.h>
 
-#include <rfb/encodings.h>
-#include <rfb/ScreenSet.h>
+namespace core { struct Rect; }
 
 namespace rdr { class OutStream; }
 
@@ -68,7 +67,7 @@ namespace rfb {
                                const uint8_t* const* data);
 
     // writeFence() sends a new fence request or response to the client.
-    void writeFence(uint32_t flags, unsigned len, const char data[]);
+    void writeFence(uint32_t flags, unsigned len, const uint8_t data[]);
 
     // writeEndOfContinuousUpdates() indicates that we have left continuous
     // updates mode.
@@ -93,6 +92,9 @@ namespace rfb {
     // And QEMU keyboard event handshake
     void writeQEMUKeyEvent();
 
+    // let the client know we support extended mouse button support
+    void writeExtendedMouseButtonsSupport();
+
     // needFakeUpdate() returns true when an immediate update is needed in
     // order to flush out pseudo-rectangles to the client.
     bool needFakeUpdate();
@@ -114,11 +116,11 @@ namespace rfb {
     void writeFramebufferUpdateEnd();
 
     // There is no explicit encoder for CopyRect rects.
-    void writeCopyRect(const Rect& r, int srcX, int srcY);
+    void writeCopyRect(const core::Rect& r, int srcX, int srcY);
 
     // Encoders should call these to mark the start and stop of individual
     // rects.
-    void startRect(const Rect& r, int enc);
+    void startRect(const core::Rect& r, int enc);
     void endRect();
 
   protected:
@@ -135,10 +137,10 @@ namespace rfb {
     void writeSetDesktopNameRect(const char *name);
     void writeSetCursorRect(int width, int height,
                             int hotspotX, int hotspotY,
-                            const void* data, const void* mask);
+                            const uint8_t* data, const uint8_t* mask);
     void writeSetXCursorRect(int width, int height,
                              int hotspotX, int hotspotY,
-                             const void* data, const void* mask);
+                             const uint8_t* data, const uint8_t* mask);
     void writeSetCursorWithAlphaRect(int width, int height,
                                      int hotspotX, int hotspotY,
                                      const uint8_t* data);
@@ -148,6 +150,7 @@ namespace rfb {
     void writeSetVMwareCursorPositionRect(int hotspotX, int hotspotY);
     void writeLEDStateRect(uint8_t state);
     void writeQEMUKeyEventRect();
+    void writeExtendedMouseButtonsRect();
 
     ClientParams* client;
     rdr::OutStream* os;
@@ -160,6 +163,7 @@ namespace rfb {
     bool needCursorPos;
     bool needLEDState;
     bool needQEMUKeyEvent;
+    bool needExtMouseButtonsEvent;
 
     typedef struct {
       uint16_t reason, result;

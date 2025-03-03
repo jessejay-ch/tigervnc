@@ -22,13 +22,18 @@
 #endif
 
 #include <assert.h>
+
+#include <stdexcept>
+
+#include <core/Configuration.h>
+
 #include <rfb/CSecurityNone.h>
 #include <rfb/CSecurityStack.h>
 #include <rfb/CSecurityVeNCrypt.h>
 #include <rfb/CSecurityVncAuth.h>
 #include <rfb/CSecurityPlain.h>
-#include <rdr/Exception.h>
 #include <rfb/Security.h>
+#include <rfb/SecurityClient.h>
 #ifdef HAVE_GNUTLS
 #include <rfb/CSecurityTLS.h>
 #endif
@@ -38,15 +43,9 @@
 #include <rfb/CSecurityMSLogonII.h>
 #endif
 
-using namespace rdr;
 using namespace rfb;
 
-UserPasswdGetter *CSecurity::upg = NULL;
-#if defined(HAVE_GNUTLS) || defined(HAVE_NETTLE)
-UserMsgBox *CSecurity::msg = NULL;
-#endif
-
-StringParameter SecurityClient::secTypes
+core::StringParameter SecurityClient::secTypes
 ("SecurityTypes",
  "Specify which security scheme to use (None, VncAuth, Plain"
 #ifdef HAVE_GNUTLS
@@ -60,18 +59,12 @@ StringParameter SecurityClient::secTypes
  "X509Plain,TLSPlain,X509Vnc,TLSVnc,X509None,TLSNone,"
 #endif
 #ifdef HAVE_NETTLE
- "RA2,RA2_256,RA2ne,RA2ne_256,DH,MSLogonII"
+ "RA2,RA2_256,RA2ne,RA2ne_256,DH,MSLogonII,"
 #endif
- "VncAuth,None",
-ConfViewer);
+ "VncAuth,None");
 
 CSecurity* SecurityClient::GetCSecurity(CConnection* cc, uint32_t secType)
 {
-  assert (CSecurity::upg != NULL); /* (upg == NULL) means bug in the viewer */
-#if defined(HAVE_GNUTLS) || defined(HAVE_NETTLE)
-  assert (CSecurity::msg != NULL);
-#endif
-
   if (!IsSupported(secType))
     goto bail;
 
@@ -121,5 +114,5 @@ CSecurity* SecurityClient::GetCSecurity(CConnection* cc, uint32_t secType)
   }
 
 bail:
-  throw Exception("Security type not supported");
+  throw std::invalid_argument("Security type not supported");
 }

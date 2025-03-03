@@ -28,7 +28,7 @@
 #include <stdint.h>
 #include <string.h> // for memcpy
 
-#include <rdr/Exception.h>
+#include <stdexcept>
 
 // Check that callers are using InStream properly,
 // useful when writing new protocol handling
@@ -37,6 +37,11 @@
 #endif
 
 namespace rdr {
+
+  class end_of_stream : public std::runtime_error {
+  public:
+    end_of_stream() noexcept : std::runtime_error("End of stream") {}
+  };
 
   class InStream {
 
@@ -64,7 +69,7 @@ namespace rdr {
 #endif
 
       if (length > (size_t)(end - ptr)) {
-        if (restorePoint != NULL) {
+        if (restorePoint != nullptr) {
           bool ret;
           size_t restoreDiff;
 
@@ -100,22 +105,22 @@ namespace rdr {
 
     inline void setRestorePoint() {
 #ifdef RFB_INSTREAM_CHECK
-      if (restorePoint != NULL)
-        throw Exception("Nested use of input stream restore point");
+      if (restorePoint != nullptr)
+        throw std::logic_error("Nested use of input stream restore point");
 #endif
       restorePoint = ptr;
     }
     inline void clearRestorePoint() {
 #ifdef RFB_INSTREAM_CHECK
-      if (restorePoint == NULL)
-        throw Exception("Incorrect clearing of input stream restore point");
+      if (restorePoint == nullptr)
+        throw std::logic_error("Incorrect clearing of input stream restore point");
 #endif
-      restorePoint = NULL;
+      restorePoint = nullptr;
     }
     inline void gotoRestorePoint() {
 #ifdef RFB_INSTREAM_CHECK
-      if (restorePoint == NULL)
-        throw Exception("Incorrect activation of input stream restore point");
+      if (restorePoint == nullptr)
+        throw std::logic_error("Incorrect activation of input stream restore point");
 #endif
       ptr = restorePoint;
       clearRestorePoint();
@@ -145,7 +150,7 @@ namespace rdr {
 
     // readBytes() reads an exact number of bytes.
 
-    void readBytes(void* data, size_t length) {
+    void readBytes(uint8_t* data, size_t length) {
       check(length);
       memcpy(data, ptr, length);
       ptr += length;
@@ -176,7 +181,7 @@ namespace rdr {
     inline const uint8_t* getptr(size_t length) { check(length);
                                                   return ptr; }
     inline void setptr(size_t length) { if (length > avail())
-                                          throw Exception("Input stream overflow");
+                                          throw std::out_of_range("Input stream overflow");
                                         skip(length); }
 
   private:
@@ -189,11 +194,11 @@ namespace rdr {
     inline void check(size_t bytes) {
 #ifdef RFB_INSTREAM_CHECK
       if (bytes > checkedBytes)
-        throw Exception("Input stream used without underrun check");
+        throw std::logic_error("Input stream used without underrun check");
       checkedBytes -= bytes;
 #endif
       if (bytes > (size_t)(end - ptr))
-        throw Exception("InStream buffer underrun");
+        throw std::out_of_range("InStream buffer underrun");
     }
 
     // overrun() is implemented by a derived class to cope with buffer overrun.
@@ -204,7 +209,7 @@ namespace rdr {
 
   protected:
 
-    InStream() : restorePoint(NULL)
+    InStream() : restorePoint(nullptr)
 #ifdef RFB_INSTREAM_CHECK
       ,checkedBytes(0)
 #endif

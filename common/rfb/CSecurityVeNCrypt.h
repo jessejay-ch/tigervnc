@@ -28,18 +28,19 @@
 #include <stdint.h>
 
 #include <rfb/CSecurity.h>
-#include <rfb/SecurityClient.h>
 
 namespace rfb {
+
+  class SecurityClient;
 
   class CSecurityVeNCrypt : public CSecurity {
   public:
 
     CSecurityVeNCrypt(CConnection* cc, SecurityClient* sec);
     ~CSecurityVeNCrypt();
-    virtual bool processMsg();
-    int getType() const {return chosenType;}
-    virtual bool isSecure() const;
+    bool processMsg() override;
+    int getType() const override {return chosenType;}
+    bool isSecure() const override;
 
   protected:
     CSecurity *csecurity;

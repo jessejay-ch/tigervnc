@@ -22,24 +22,31 @@
 #include <config.h>
 #endif
 
+#include <algorithm>
+
+#include <core/Configuration.h>
+
+#include <rdr/OutStream.h>
+
 #include <rfb/encodings.h>
 #include <rfb/SConnection.h>
 #include <rfb/HextileEncoder.h>
 #include <rfb/Palette.h>
 #include <rfb/PixelBuffer.h>
-#include <rfb/Configuration.h>
 #include <rfb/hextileConstants.h>
 
 using namespace rfb;
 
-BoolParameter improvedHextile("ImprovedHextile",
-                              "Use improved compression algorithm for Hextile "
-                              "encoding which achieves better compression "
-                              "ratios by the cost of using more CPU time",
-                              true);
+core::BoolParameter improvedHextile("ImprovedHextile",
+                                    "Use improved compression "
+                                    "algorithm for Hextile encoding "
+                                    "which achieves better compression "
+                                    "ratios by the cost of using more "
+                                    "CPU time",
+                                    true);
 
-HextileEncoder::HextileEncoder(SConnection* conn) :
-  Encoder(conn, encodingHextile, EncoderPlain)
+HextileEncoder::HextileEncoder(SConnection* conn_) :
+  Encoder(conn_, encodingHextile, EncoderPlain)
 {
 }
 
@@ -115,7 +122,7 @@ template<class T>
 void HextileEncoder::hextileEncode(rdr::OutStream* os,
                                    const PixelBuffer* pb)
 {
-  Rect t;
+  core::Rect t;
   T buf[256];
   T oldBg = 0, oldFg = 0;
   bool oldBgValid = false;
@@ -124,11 +131,11 @@ void HextileEncoder::hextileEncode(rdr::OutStream* os,
 
   for (t.tl.y = 0; t.tl.y < pb->height(); t.tl.y += 16) {
 
-    t.br.y = __rfbmin(pb->height(), t.tl.y + 16);
+    t.br.y = std::min(pb->height(), t.tl.y + 16);
 
     for (t.tl.x = 0; t.tl.x < pb->width(); t.tl.x += 16) {
 
-      t.br.x = __rfbmin(pb->width(), t.tl.x + 16);
+      t.br.x = std::min(pb->width(), t.tl.x + 16);
 
       pb->getImage(buf, t);
 
@@ -161,7 +168,8 @@ void HextileEncoder::hextileEncode(rdr::OutStream* os,
         if (encodedLen < 0) {
           pb->getImage(buf, t);
           os->writeU8(hextileRaw);
-          os->writeBytes(buf, t.width() * t.height() * sizeof(T));
+          os->writeBytes((const uint8_t*)buf,
+                         t.width() * t.height() * sizeof(T));
           oldBgValid = oldFgValid = false;
           continue;
         }
@@ -364,7 +372,7 @@ class HextileTile {
 
 template<class T>
 HextileTile<T>::HextileTile()
-  : m_tile(NULL), m_width(0), m_height(0),
+  : m_tile(nullptr), m_width(0), m_height(0),
     m_size(0), m_flags(0), m_background(0), m_foreground(0),
     m_numSubrects(0)
 {
@@ -531,7 +539,7 @@ template<class T>
 void HextileEncoder::hextileEncodeBetter(rdr::OutStream* os,
                                          const PixelBuffer* pb)
 {
-  Rect t;
+  core::Rect t;
   T buf[256];
   T oldBg = 0, oldFg = 0;
   bool oldBgValid = false;
@@ -542,11 +550,11 @@ void HextileEncoder::hextileEncodeBetter(rdr::OutStream* os,
 
   for (t.tl.y = 0; t.tl.y < pb->height(); t.tl.y += 16) {
 
-    t.br.y = __rfbmin(pb->height(), t.tl.y + 16);
+    t.br.y = std::min(pb->height(), t.tl.y + 16);
 
     for (t.tl.x = 0; t.tl.x < pb->width(); t.tl.x += 16) {
 
-      t.br.x = __rfbmin(pb->width(), t.tl.x + 16);
+      t.br.x = std::min(pb->width(), t.tl.x + 16);
 
       pb->getImage(buf, t);
 
@@ -557,7 +565,8 @@ void HextileEncoder::hextileEncodeBetter(rdr::OutStream* os,
       if ( (tileType & hextileRaw) != 0 ||
            encodedLen >= t.width() * t.height() * sizeof(T)) {
         os->writeU8(hextileRaw);
-        os->writeBytes(buf, t.width() * t.height() * sizeof(T));
+        os->writeBytes((const uint8_t*)buf,
+                       t.width() * t.height() * sizeof(T));
         oldBgValid = oldFgValid = false;
         continue;
       }

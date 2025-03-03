@@ -31,13 +31,21 @@
 #include <errno.h>
 #include <pwd.h>
 
-#include <rfb/Logger_stdio.h>
-#include <rfb/LogWriter.h>
+#include <core/Configuration.h>
+#include <core/Logger_stdio.h>
+#include <core/LogWriter.h>
+#include <core/Timer.h>
+
+#include <rdr/FdOutStream.h>
+
 #include <rfb/VNCServerST.h>
-#include <rfb/Configuration.h>
-#include <rfb/Timer.h>
+
 #include <network/TcpSocket.h>
 #include <network/UnixSocket.h>
+
+#ifdef HAVE_LIBSYSTEMD
+#  include <systemd/sd-daemon.h>
+#endif
 
 #include <signal.h>
 #include <X11/X.h>
@@ -51,30 +59,38 @@
 
 extern char buildtime[];
 
-using namespace rfb;
-using namespace network;
-
-static LogWriter vlog("Main");
+static core::LogWriter vlog("Main");
 
 static const char* defaultDesktopName();
 
-IntParameter pollingCycle("PollingCycle", "Milliseconds per one polling "
-                          "cycle; actual interval may be dynamically "
-                          "adjusted to satisfy MaxProcessorUsage setting", 30);
-IntParameter maxProcessorUsage("MaxProcessorUsage", "Maximum percentage of "
-                               "CPU time to be consumed", 35);
-StringParameter desktopName("desktop", "Name of VNC desktop", defaultDesktopName());
-StringParameter displayname("display", "The X display", "");
-IntParameter rfbport("rfbport", "TCP port to listen for RFB protocol",5900);
-StringParameter rfbunixpath("rfbunixpath", "Unix socket to listen for RFB protocol", "");
-IntParameter rfbunixmode("rfbunixmode", "Unix socket access mode", 0600);
-StringParameter hostsFile("HostsFile", "File with IP access control rules", "");
-BoolParameter localhostOnly("localhost",
-                            "Only allow connections from localhost",
-                            false);
-StringParameter interface("interface",
-                          "listen on the specified network address",
-                          "all");
+core::IntParameter
+  pollingCycle("PollingCycle",
+               "Milliseconds per one polling cycle; actual interval "
+               "may be dynamically adjusted to satisfy "
+               "MaxProcessorUsage setting", 30);
+core::IntParameter
+  maxProcessorUsage("MaxProcessorUsage",
+                    "Maximum percentage of CPU time to be consumed",
+                    35);
+core::StringParameter
+  desktopName("desktop", "Name of VNC desktop", defaultDesktopName());
+core::StringParameter
+  displayname("display", "The X display", "");
+core::IntParameter
+  rfbport("rfbport", "TCP port to listen for RFB protocol", 5900);
+core::StringParameter
+  rfbunixpath("rfbunixpath",
+              "Unix socket to listen for RFB protocol", "");
+core::IntParameter
+  rfbunixmode("rfbunixmode", "Unix socket access mode", 0600);
+core::StringParameter
+  hostsFile("HostsFile", "File with IP access control rules", "");
+core::BoolParameter
+  localhostOnly("localhost",
+                "Only allow connections from localhost", false);
+core::StringParameter
+  interface("interface",
+            "Listen on the specified network address", "all");
 
 static const char* defaultDesktopName()
 {
@@ -87,10 +103,10 @@ static const char* defaultDesktopName()
     return "";
 
   struct passwd* pwent = getpwuid(getuid());
-  if (pwent == NULL)
+  if (pwent == nullptr)
     return "";
 
-  int len = snprintf(NULL, 0, "%s@%s", pwent->pw_name, hostname.data());
+  int len = snprintf(nullptr, 0, "%s@%s", pwent->pw_name, hostname.data());
   if (len < 0)
     return "";
 
@@ -113,29 +129,60 @@ static void CleanupSignalHandler(int /*sig*/)
   caughtSignal = true;
 }
 
+static bool hasSystemdListeners()
+{
+#ifdef HAVE_LIBSYSTEMD
+  // This also returns true on errors, because we then assume we were
+  // meant to use systemd but failed somewhere
+  return sd_listen_fds(0) != 0;
+#else
+  return false;
+#endif
+}
 
-class FileTcpFilter : public TcpFilter
+static int createSystemdListeners(std::list<network::SocketListener*> *listeners)
+{
+#ifdef HAVE_LIBSYSTEMD
+  int count = sd_listen_fds(0);
+  if (count < 0) {
+    vlog.error("Error getting listening sockets from systemd: %s",
+               strerror(-count));
+    return count;
+  }
+
+  for (int i = 0; i < count; ++i)
+      listeners->push_back(new network::TcpListener(SD_LISTEN_FDS_START + i));
+
+  return count;
+#else
+  (void)listeners;
+  return 0;
+#endif
+}
+
+
+class FileTcpFilter : public network::TcpFilter
 {
 
 public:
 
   FileTcpFilter(const char *fname)
-    : TcpFilter("-"), fileName(NULL), lastModTime(0)
+    : TcpFilter("-"), fileName(nullptr), lastModTime(0)
   {
-    if (fname != NULL)
+    if (fname != nullptr)
       fileName = strdup((char *)fname);
   }
 
   virtual ~FileTcpFilter()
   {
-    if (fileName != NULL)
+    if (fileName != nullptr)
       free(fileName);
   }
 
-  virtual bool verifyConnection(Socket* s)
+  bool verifyConnection(network::Socket* s) override
   {
     if (!reloadRules()) {
-      vlog.error("Could not read IP filtering rules: rejecting all clients");
+      vlog.error("Could not read IP filtering rules, rejecting all clients");
       filter.clear();
       filter.push_back(parsePattern("-"));
       return false;
@@ -148,7 +195,7 @@ protected:
 
   bool reloadRules()
   {
-    if (fileName == NULL)
+    if (fileName == nullptr)
       return true;
 
     struct stat st;
@@ -158,7 +205,7 @@ protected:
     if (st.st_mtime != lastModTime) {
       // Actually reload only if the file was modified
       FILE *fp = fopen(fileName, "r");
-      if (fp == NULL)
+      if (fp == nullptr)
         return false;
 
       // Remove all the rules from the parent class
@@ -191,14 +238,14 @@ private:
 
   bool readLine(char *buf, int bufSize, FILE *fp)
   {
-    if (fp == NULL || buf == NULL || bufSize == 0)
+    if (fp == nullptr || buf == nullptr || bufSize == 0)
       return false;
 
-    if (fgets(buf, bufSize, fp) == NULL)
+    if (fgets(buf, bufSize, fp) == nullptr)
       return false;
 
     char *ptr = strchr(buf, '\n');
-    if (ptr != NULL) {
+    if (ptr != nullptr) {
       *ptr = '\0';              // remove newline at the end
     } else {
       if (!feof(fp)) {
@@ -217,7 +264,7 @@ char* programName;
 
 static void printVersion(FILE *fp)
 {
-  fprintf(fp, "TigerVNC Server version %s, built %s\n",
+  fprintf(fp, "TigerVNC server version %s, built %s\n",
           PACKAGE_VERSION, buildtime);
 }
 
@@ -233,51 +280,61 @@ static void usage()
           "Other valid forms are <param>=<value> -<param>=<value> "
           "--<param>=<value>\n"
           "Parameter names are case-insensitive.  The parameters are:\n\n");
-  Configuration::listParams(79, 14);
+  core::Configuration::listParams(79, 14);
   exit(1);
 }
 
 int main(int argc, char** argv)
 {
-  initStdIOLoggers();
-  LogWriter::setLogParams("*:stderr:30");
+  core::initStdIOLoggers();
+  core::LogWriter::setLogParams("*:stderr:30");
 
   programName = argv[0];
   Display* dpy;
 
-  Configuration::enableServerParams();
+  // Assume different defaults when socket activated
+  if (hasSystemdListeners())
+    rfbport.setParam(-1);
 
-  // FIXME: We don't support clipboard yet
-  Configuration::removeParam("AcceptCutText");
-  Configuration::removeParam("SendCutText");
-  Configuration::removeParam("MaxCutText");
+  for (int i = 1; i < argc;) {
+    int ret;
 
-  for (int i = 1; i < argc; i++) {
-    if (Configuration::setParam(argv[i]))
+    ret = core::Configuration::handleParamArg(argc, argv, i);
+    if (ret > 0) {
+      i += ret;
       continue;
+    }
 
-    if (argv[i][0] == '-') {
-      if (i+1 < argc) {
-        if (Configuration::setParam(&argv[i][1], argv[i+1])) {
-          i++;
-          continue;
-        }
-      }
-      if (strcmp(argv[i], "-v") == 0 ||
-          strcmp(argv[i], "-version") == 0 ||
-          strcmp(argv[i], "--version") == 0) {
-        printVersion(stdout);
-        return 0;
-      }
+    if (strcmp(argv[i], "-h") == 0 ||
+        strcmp(argv[i], "-help") == 0 ||
+        strcmp(argv[i], "--help") == 0) {
       usage();
     }
 
-    usage();
+    if (strcmp(argv[i], "-v") == 0 ||
+        strcmp(argv[i], "-version") == 0 ||
+        strcmp(argv[i], "--version") == 0) {
+      printVersion(stdout);
+      return 0;
+    }
+
+    if (argv[i][0] == '-') {
+      fprintf(stderr, "%s: Unrecognized option '%s'\n",
+              programName, argv[i]);
+      fprintf(stderr, "See '%s --help' for more information.\n",
+              programName);
+      exit(1);
+    }
+
+    fprintf(stderr, "%s: Extra argument '%s'\n", programName, argv[i]);
+    fprintf(stderr, "See '%s --help' for more information.\n",
+            programName);
+    exit(1);
   }
 
   if (!(dpy = XOpenDisplay(displayname))) {
     // FIXME: Why not vlog.error(...)?
-    fprintf(stderr,"%s: unable to open display \"%s\"\r\n",
+    fprintf(stderr,"%s: Unable to open display \"%s\"\r\n",
             programName, XDisplayName(displayname));
     exit(1);
   }
@@ -286,7 +343,7 @@ int main(int argc, char** argv)
   signal(SIGINT, CleanupSignalHandler);
   signal(SIGTERM, CleanupSignalHandler);
 
-  std::list<SocketListener*> listeners;
+  std::list<network::SocketListener*> listeners;
 
   try {
     TXWindow::init(dpy,"x0vncserver");
@@ -298,7 +355,12 @@ int main(int argc, char** argv)
     }
     XDesktop desktop(dpy, &geo);
 
-    VNCServerST server(desktopName, &desktop);
+    rfb::VNCServerST server(desktopName, &desktop);
+
+    if (createSystemdListeners(&listeners) > 0) {
+      // When systemd is in charge of listeners, do not listen to anything else
+      vlog.info("Listening on systemd sockets");
+    }
 
     if (rfbunixpath.getValueStr()[0] != '\0') {
       listeners.push_back(new network::UnixListener(rfbunixpath, rfbunixmode));
@@ -306,33 +368,42 @@ int main(int argc, char** argv)
     }
 
     if ((int)rfbport != -1) {
+      std::list<network::SocketListener*> tcp_listeners;
       const char *addr = interface;
+
       if (strcasecmp(addr, "all") == 0)
-        addr = 0;
+        addr = nullptr;
       if (localhostOnly)
-        createLocalTcpListeners(&listeners, (int)rfbport);
+        createLocalTcpListeners(&tcp_listeners, (int)rfbport);
       else
-        createTcpListeners(&listeners, addr, (int)rfbport);
-      vlog.info("Listening for VNC connections on %s interface(s), port %d",
-                localhostOnly ? "local" : (const char*)interface,
-                (int)rfbport);
+        createTcpListeners(&tcp_listeners, addr, (int)rfbport);
+
+      if (!tcp_listeners.empty()) {
+        listeners.splice (listeners.end(), tcp_listeners);
+        vlog.info("Listening for VNC connections on %s interface(s), port %d",
+                  localhostOnly ? "local" : (const char*)interface,
+                  (int)rfbport);
+      }
+
+      FileTcpFilter fileTcpFilter(hostsFile);
+      if (strlen(hostsFile) != 0)
+        for (network::SocketListener* listener : listeners)
+          listener->setFilter(&fileTcpFilter);
     }
 
-    FileTcpFilter fileTcpFilter(hostsFile);
-    if (strlen(hostsFile) != 0)
-      for (std::list<SocketListener*>::iterator i = listeners.begin();
-           i != listeners.end();
-           i++)
-        (*i)->setFilter(&fileTcpFilter);
+    if (listeners.empty()) {
+      vlog.error("No path or port configured for incoming connections");
+      return -1;
+    }
 
     PollingScheduler sched((int)pollingCycle, (int)maxProcessorUsage);
 
     while (!caughtSignal) {
-      int wait_ms;
+      int wait_ms, nextTimeout;
       struct timeval tv;
       fd_set rfds, wfds;
-      std::list<Socket*> sockets;
-      std::list<Socket*>::iterator i;
+      std::list<network::Socket*> sockets;
+      std::list<network::Socket*>::iterator i;
 
       // Process any incoming X events
       TXWindow::handleXEvents(dpy);
@@ -341,10 +412,8 @@ int main(int argc, char** argv)
       FD_ZERO(&wfds);
 
       FD_SET(ConnectionNumber(dpy), &rfds);
-      for (std::list<SocketListener*>::iterator i = listeners.begin();
-           i != listeners.end();
-           i++)
-        FD_SET((*i)->getFd(), &rfds);
+      for (network::SocketListener* listener : listeners)
+        FD_SET(listener->getFd(), &rfds);
 
       server.getSockets(&sockets);
       int clients_connected = 0;
@@ -363,7 +432,7 @@ int main(int argc, char** argv)
       if (!clients_connected)
         sched.reset();
 
-      wait_ms = 0;
+      wait_ms = -1;
 
       if (sched.isRunning()) {
         wait_ms = sched.millisRemaining();
@@ -372,15 +441,18 @@ int main(int argc, char** argv)
         }
       }
 
-      soonestTimeout(&wait_ms, Timer::checkTimeouts());
+      // Trigger timers and check when the next will expire
+      nextTimeout = core::Timer::checkTimeouts();
+      if (nextTimeout >= 0 && (wait_ms == -1 || nextTimeout < wait_ms))
+        wait_ms = nextTimeout;
 
       tv.tv_sec = wait_ms / 1000;
       tv.tv_usec = (wait_ms % 1000) * 1000;
 
       // Do the wait...
       sched.sleepStarted();
-      int n = select(FD_SETSIZE, &rfds, &wfds, 0,
-                     wait_ms ? &tv : NULL);
+      int n = select(FD_SETSIZE, &rfds, &wfds, nullptr,
+                     wait_ms >= 0 ? &tv : nullptr);
       sched.sleepFinished();
 
       if (n < 0) {
@@ -388,16 +460,14 @@ int main(int argc, char** argv)
           vlog.debug("Interrupted select() system call");
           continue;
         } else {
-          throw rdr::SystemException("select", errno);
+          throw core::socket_error("select", errno);
         }
       }
 
       // Accept new VNC connections
-      for (std::list<SocketListener*>::iterator i = listeners.begin();
-           i != listeners.end();
-           i++) {
-        if (FD_ISSET((*i)->getFd(), &rfds)) {
-          Socket* sock = (*i)->accept();
+      for (network::SocketListener* listener : listeners) {
+        if (FD_ISSET(listener->getFd(), &rfds)) {
+          network::Socket* sock = listener->accept();
           if (sock) {
             server.addSocket(sock);
           } else {
@@ -406,7 +476,7 @@ int main(int argc, char** argv)
         }
       }
 
-      Timer::checkTimeouts();
+      core::Timer::checkTimeouts();
 
       // Client list could have been changed.
       server.getSockets(&sockets);
@@ -429,19 +499,16 @@ int main(int argc, char** argv)
       }
     }
 
-  } catch (rdr::Exception &e) {
-    vlog.error("%s", e.str());
+  } catch (std::exception& e) {
+    vlog.error("%s", e.what());
     return 1;
   }
 
   TXWindow::handleXEvents(dpy);
 
   // Run listener destructors; remove UNIX sockets etc
-  for (std::list<SocketListener*>::iterator i = listeners.begin();
-       i != listeners.end();
-       i++) {
-    delete *i;
-  }
+  for (network::SocketListener* listener : listeners)
+    delete listener;
 
   vlog.info("Terminated");
   return 0;

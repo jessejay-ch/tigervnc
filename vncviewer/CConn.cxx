@@ -27,14 +27,20 @@
 #include <unistd.h>
 #endif
 
+#include <core/LogWriter.h>
+#include <core/Timer.h>
+#include <core/string.h>
+
+#include <rdr/FdInStream.h>
+#include <rdr/FdOutStream.h>
+
 #include <rfb/CMsgWriter.h>
 #include <rfb/CSecurity.h>
-#include <rfb/Hostname.h>
-#include <rfb/LogWriter.h>
+#include <rfb/Exception.h>
 #include <rfb/Security.h>
-#include <rfb/screenTypes.h>
 #include <rfb/fenceTypes.h>
-#include <rfb/Timer.h>
+#include <rfb/screenTypes.h>
+
 #include <network/TcpSocket.h>
 #ifndef WIN32
 #include <network/UnixSocket.h>
@@ -55,27 +61,23 @@
 #include "win32.h"
 #endif
 
-using namespace rdr;
-using namespace rfb;
-using namespace std;
-
-static rfb::LogWriter vlog("CConn");
+static core::LogWriter vlog("CConn");
 
 // 8 colours (1 bit per component)
-static const PixelFormat verylowColourPF(8, 3,false, true,
-                                         1, 1, 1, 2, 1, 0);
+static const rfb::PixelFormat verylowColourPF(8, 3,false, true,
+                                              1, 1, 1, 2, 1, 0);
 // 64 colours (2 bits per component)
-static const PixelFormat lowColourPF(8, 6, false, true,
-                                     3, 3, 3, 4, 2, 0);
+static const rfb::PixelFormat lowColourPF(8, 6, false, true,
+                                          3, 3, 3, 4, 2, 0);
 // 256 colours (2-3 bits per component)
-static const PixelFormat mediumColourPF(8, 8, false, true,
-                                        7, 7, 3, 5, 2, 0);
+static const rfb::PixelFormat mediumColourPF(8, 8, false, true,
+                                             7, 7, 3, 5, 2, 0);
 
 // Time new bandwidth estimates are weighted against (in ms)
 static const unsigned bpsEstimateWindow = 1000;
 
-CConn::CConn(const char* vncServerName, network::Socket* socket=NULL)
-  : serverPort(0), desktop(NULL), updateCount(0), pixelCount(0),
+CConn::CConn(const char* vncServerName, network::Socket* socket=nullptr)
+  : serverPort(0), desktop(nullptr), updateCount(0), pixelCount(0),
     lastServerEncoding((unsigned int)-1), bpsEstimate(20000000)
 {
   setShared(::shared);
@@ -92,26 +94,26 @@ CConn::CConn(const char* vncServerName, network::Socket* socket=NULL)
   if (!noJpeg)
     setQualityLevel(::qualityLevel);
 
-  if(sock == NULL) {
+  if(sock == nullptr) {
     try {
 #ifndef WIN32
-      if (strchr(vncServerName, '/') != NULL) {
+      if (strchr(vncServerName, '/') != nullptr) {
         sock = new network::UnixSocket(vncServerName);
         serverHost = sock->getPeerAddress();
         vlog.info(_("Connected to socket %s"), serverHost.c_str());
       } else
 #endif
       {
-        getHostAndPort(vncServerName, &serverHost, &serverPort);
+        network::getHostAndPort(vncServerName, &serverHost, &serverPort);
 
         sock = new network::TcpSocket(serverHost.c_str(), serverPort);
         vlog.info(_("Connected to host %s port %d"),
                   serverHost.c_str(), serverPort);
       }
-    } catch (rdr::Exception& e) {
-      vlog.error("%s", e.str());
+    } catch (std::exception& e) {
+      vlog.error("%s", e.what());
       abort_connection(_("Failed to connect to \"%s\":\n\n%s"),
-                       vncServerName, e.str());
+                       vncServerName, e.what());
       return;
     }
   }
@@ -141,72 +143,53 @@ CConn::~CConn()
   delete sock;
 }
 
-const char *CConn::connectionInfo()
+std::string CConn::connectionInfo()
 {
-  static char infoText[1024] = "";
+  std::string infoText;
 
-  char scratch[100];
   char pfStr[100];
 
-  // Crude way of avoiding constant overflow checks
-  assert((sizeof(scratch) + 1) * 10 < sizeof(infoText));
+  infoText += core::format(_("Desktop name: %.80s"), server.name());
+  infoText += "\n";
 
-  infoText[0] = '\0';
+  infoText += core::format(_("Host: %.80s port: %d"),
+                           serverHost.c_str(), serverPort);
+  infoText += "\n";
 
-  snprintf(scratch, sizeof(scratch),
-           _("Desktop name: %.80s"), server.name());
-  strcat(infoText, scratch);
-  strcat(infoText, "\n");
-
-  snprintf(scratch, sizeof(scratch),
-           _("Host: %.80s port: %d"), serverHost.c_str(), serverPort);
-  strcat(infoText, scratch);
-  strcat(infoText, "\n");
-
-  snprintf(scratch, sizeof(scratch),
-           _("Size: %d x %d"), server.width(), server.height());
-  strcat(infoText, scratch);
-  strcat(infoText, "\n");
+  infoText += core::format(_("Size: %d x %d"),
+                           server.width(), server.height());
+  infoText += "\n";
 
   // TRANSLATORS: Will be filled in with a string describing the
   // protocol pixel format in a fairly language neutral way
   server.pf().print(pfStr, 100);
-  snprintf(scratch, sizeof(scratch),
-           _("Pixel format: %s"), pfStr);
-  strcat(infoText, scratch);
-  strcat(infoText, "\n");
+  infoText += core::format(_("Pixel format: %s"), pfStr);
+  infoText += "\n";
 
   // TRANSLATORS: Similar to the earlier "Pixel format" string
   serverPF.print(pfStr, 100);
-  snprintf(scratch, sizeof(scratch),
-           _("(server default %s)"), pfStr);
-  strcat(infoText, scratch);
-  strcat(infoText, "\n");
+  infoText += core::format(_("(server default %s)"), pfStr);
+  infoText += "\n";
 
-  snprintf(scratch, sizeof(scratch),
-           _("Requested encoding: %s"), encodingName(getPreferredEncoding()));
-  strcat(infoText, scratch);
-  strcat(infoText, "\n");
+  infoText += core::format(_("Requested encoding: %s"),
+                           rfb::encodingName(getPreferredEncoding()));
+  infoText += "\n";
 
-  snprintf(scratch, sizeof(scratch),
-           _("Last used encoding: %s"), encodingName(lastServerEncoding));
-  strcat(infoText, scratch);
-  strcat(infoText, "\n");
+  infoText += core::format(_("Last used encoding: %s"),
+                           rfb::encodingName(lastServerEncoding));
+  infoText += "\n";
 
-  snprintf(scratch, sizeof(scratch),
-           _("Line speed estimate: %d kbit/s"), (int)(bpsEstimate/1000));
-  strcat(infoText, scratch);
-  strcat(infoText, "\n");
+  infoText += core::format(_("Line speed estimate: %d kbit/s"),
+                           (int)(bpsEstimate / 1000));
+  infoText += "\n";
 
-  snprintf(scratch, sizeof(scratch),
-           _("Protocol version: %d.%d"), server.majorVersion, server.minorVersion);
-  strcat(infoText, scratch);
-  strcat(infoText, "\n");
+  infoText += core::format(_("Protocol version: %d.%d"),
+                           server.majorVersion, server.minorVersion);
+  infoText += "\n";
 
-  snprintf(scratch, sizeof(scratch),
-           _("Security method: %s"), secTypeName(csecurity->getType()));
-  strcat(infoText, scratch);
-  strcat(infoText, "\n");
+  infoText += core::format(_("Security method: %s"),
+                           rfb::secTypeName(csecurity->getType()));
+  infoText += "\n";
 
   return infoText;
 }
@@ -254,7 +237,7 @@ void CConn::socketEvent(FL_SOCKET fd, void *data)
       // Make sure that the FLTK handling and the timers gets some CPU
       // time in case of back to back messages
       Fl::check();
-      Timer::checkTimeouts();
+      core::Timer::checkTimeouts();
 
       // Also check if we need to stop reading and terminate
       if (should_disconnect())
@@ -262,8 +245,8 @@ void CConn::socketEvent(FL_SOCKET fd, void *data)
     }
 
     cc->getOutStream()->cork(false);
-  } catch (rdr::EndOfStream& e) {
-    vlog.info("%s", e.str());
+  } catch (rdr::end_of_stream& e) {
+    vlog.info("%s", e.what());
     if (!cc->desktop) {
       vlog.error(_("The connection was dropped by the server before "
                    "the session could be established."));
@@ -272,8 +255,16 @@ void CConn::socketEvent(FL_SOCKET fd, void *data)
     } else {
       disconnect();
     }
-  } catch (rdr::Exception& e) {
-    vlog.error("%s", e.str());
+  } catch (rfb::auth_cancelled& e) {
+    vlog.info("%s", e.what());
+    disconnect();
+  } catch (rfb::auth_error& e) {
+    cc->resetPassword();
+    vlog.error(_("Authentication failed: %s"), e.what());
+    abort_connection(_("Failed to authenticate with the server. Reason "
+                       "given by the server:\n\n%s"), e.what());
+  } catch (std::exception& e) {
+    vlog.error("%s", e.what());
     abort_connection_with_unexpected_error(e);
   }
 
@@ -282,12 +273,27 @@ void CConn::socketEvent(FL_SOCKET fd, void *data)
     when |= FL_WRITE;
 
   Fl::add_fd(fd, when, socketEvent, data);
-
   recursing = false;
-  Fl::add_fd(fd, FL_READ | FL_EXCEPT, socketEvent, data);
+}
+
+void CConn::resetPassword()
+{
+    dlg.resetPassword();
 }
 
 ////////////////////// CConnection callback methods //////////////////////
+
+bool CConn::showMsgBox(rfb::MsgBoxFlags flags, const char *title,
+                       const char *text)
+{
+    return dlg.showMsgBox(flags, title, text);
+}
+
+void CConn::getUserPasswd(bool secure, std::string *user,
+                          std::string *password)
+{
+    dlg.getUserPasswd(secure, user, password);
+}
 
 // initDone() is called when the serverInit message has been received.  At
 // this point we create the desktop window and display it.  We also tell the
@@ -307,31 +313,19 @@ void CConn::initDone()
 
   // Force a switch to the format and encoding we'd like
   updatePixelFormat();
-  int encNum = encodingNum(::preferredEncoding);
+  int encNum = rfb::encodingNum(::preferredEncoding);
   if (encNum != -1)
     setPreferredEncoding(encNum);
 }
 
-// setDesktopSize() is called when the desktop size changes (including when
-// it is set initially).
-void CConn::setDesktopSize(int w, int h)
-{
-  CConnection::setDesktopSize(w,h);
-  resizeFramebuffer();
-}
-
-// setExtendedDesktopSize() is a more advanced version of setDesktopSize()
 void CConn::setExtendedDesktopSize(unsigned reason, unsigned result,
-                                   int w, int h, const rfb::ScreenSet& layout)
+                                   int w, int h,
+                                   const rfb::ScreenSet& layout)
 {
   CConnection::setExtendedDesktopSize(reason, result, w, h, layout);
 
-  if ((reason == reasonClient) && (result != resultSuccess)) {
-    vlog.error(_("SetDesktopSize failed: %d"), result);
-    return;
-  }
-
-  resizeFramebuffer();
+  if (reason == rfb::reasonClient)
+    desktop->setDesktopSizeDone(result);
 }
 
 // setName() is called when the desktop name changes
@@ -350,7 +344,7 @@ void CConn::framebufferUpdateStart()
   CConnection::framebufferUpdateStart();
 
   // For bandwidth estimate
-  gettimeofday(&updateStartTime, NULL);
+  gettimeofday(&updateStartTime, nullptr);
   updateStartPos = sock->inStream().pos();
 
   // Update the screen prematurely for very slow updates
@@ -371,7 +365,7 @@ void CConn::framebufferUpdateEnd()
   updateCount++;
 
   // Calculate bandwidth everything managed to maintain during this update
-  gettimeofday(&now, NULL);
+  gettimeofday(&now, nullptr);
   elapsed = (now.tv_sec - updateStartTime.tv_sec) * 1000000;
   elapsed += now.tv_usec - updateStartTime.tv_usec;
   if (elapsed == 0)
@@ -408,11 +402,11 @@ void CConn::bell()
   fl_beep();
 }
 
-bool CConn::dataRect(const Rect& r, int encoding)
+bool CConn::dataRect(const core::Rect& r, int encoding)
 {
   bool ret;
 
-  if (encoding != encodingCopyRect)
+  if (encoding != rfb::encodingCopyRect)
     lastServerEncoding = encoding;
 
   ret = CConnection::dataRect(r, encoding);
@@ -423,24 +417,25 @@ bool CConn::dataRect(const Rect& r, int encoding)
   return ret;
 }
 
-void CConn::setCursor(int width, int height, const Point& hotspot,
+void CConn::setCursor(int width, int height, const core::Point& hotspot,
                       const uint8_t* data)
 {
   desktop->setCursor(width, height, hotspot, data);
 }
 
-void CConn::setCursorPos(const Point& pos)
+void CConn::setCursorPos(const core::Point& pos)
 {
   desktop->setCursorPos(pos);
 }
 
-void CConn::fence(uint32_t flags, unsigned len, const char data[])
+void CConn::fence(uint32_t flags, unsigned len, const uint8_t data[])
 {
   CMsgHandler::fence(flags, len, data);
 
-  if (flags & fenceFlagRequest) {
+  if (flags & rfb::fenceFlagRequest) {
     // We handle everything synchronously so we trivially honor these modes
-    flags = flags & (fenceFlagBlockBefore | fenceFlagBlockAfter);
+    flags = flags & (rfb::fenceFlagBlockBefore |
+                     rfb::fenceFlagBlockAfter);
 
     writer()->writeFence(flags, len, data);
     return;
@@ -498,7 +493,7 @@ void CConn::autoSelectFormatAndEncoding()
   int newQualityLevel = ::qualityLevel;
 
   // Always use Tight
-  setPreferredEncoding(encodingTight);
+  setPreferredEncoding(rfb::encodingTight);
 
   // Select appropriate quality level
   if (!noJpeg) {
@@ -544,7 +539,7 @@ void CConn::autoSelectFormatAndEncoding()
 // format and encoding appropriately.
 void CConn::updatePixelFormat()
 {
-  PixelFormat pf;
+  rfb::PixelFormat pf;
 
   if (fullColour) {
     pf = fullColourPF;
@@ -572,7 +567,7 @@ void CConn::handleOptions(void *data)
   // list is cheap. Avoid overriding what the auto logic has selected
   // though.
   if (!autoSelect) {
-    int encNum = encodingNum(::preferredEncoding);
+    int encNum = rfb::encodingNum(::preferredEncoding);
 
     if (encNum != -1)
       self->setPreferredEncoding(encNum);

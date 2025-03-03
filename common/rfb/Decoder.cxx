@@ -22,8 +22,10 @@
 #endif
 
 #include <stdio.h>
+
+#include <core/Region.h>
+
 #include <rfb/encodings.h>
-#include <rfb/Region.h>
 #include <rfb/Decoder.h>
 #include <rfb/RawDecoder.h>
 #include <rfb/CopyRectDecoder.h>
@@ -37,7 +39,7 @@
 
 using namespace rfb;
 
-Decoder::Decoder(enum DecoderFlags flags) : flags(flags)
+Decoder::Decoder(enum DecoderFlags flags_) : flags(flags_)
 {
 }
 
@@ -45,20 +47,20 @@ Decoder::~Decoder()
 {
 }
 
-void Decoder::getAffectedRegion(const Rect& rect,
-                                const void* /*buffer*/,
+void Decoder::getAffectedRegion(const core::Rect& rect,
+                                const uint8_t* /*buffer*/,
                                 size_t /*buflen*/,
                                 const ServerParams& /*server*/,
-                                Region* region)
+                                core::Region* region)
 {
   region->reset(rect);
 }
 
-bool Decoder::doRectsConflict(const Rect& /*rectA*/,
-                              const void* /*bufferA*/,
+bool Decoder::doRectsConflict(const core::Rect& /*rectA*/,
+                              const uint8_t* /*bufferA*/,
                               size_t /*buflenA*/,
-                              const Rect& /*rectB*/,
-                              const void* /*bufferB*/,
+                              const core::Rect& /*rectB*/,
+                              const uint8_t* /*bufferB*/,
                               size_t /*buflenB*/,
                               const ServerParams& /*server*/)
 {
@@ -103,6 +105,6 @@ Decoder* Decoder::createDecoder(int encoding)
     return new H264Decoder();
 #endif
   default:
-    return NULL;
+    return nullptr;
   }
 }

@@ -21,36 +21,21 @@
 #include <config.h>
 #endif
 
-#include <assert.h>
-#include <stdlib.h>
 #include <string.h>
-#include <rfb/CSecurityNone.h>
-#include <rfb/CSecurityStack.h>
-#include <rfb/CSecurityVeNCrypt.h>
-#include <rfb/CSecurityVncAuth.h>
-#include <rfb/CSecurityPlain.h>
-#include <rdr/Exception.h>
-#include <rfb/LogWriter.h>
+
+#include <algorithm>
+
+#include <core/LogWriter.h>
+#include <core/string.h>
+
 #include <rfb/Security.h>
-#include <rfb/SSecurityNone.h>
-#include <rfb/SSecurityStack.h>
-#include <rfb/SSecurityPlain.h>
-#include <rfb/SSecurityVncAuth.h>
-#include <rfb/SSecurityVeNCrypt.h>
-#ifdef HAVE_GNUTLS
-#include <rfb/CSecurityTLS.h>
-#include <rfb/SSecurityTLS.h>
-#endif
-#include <rfb/util.h>
 
-using namespace rdr;
 using namespace rfb;
-using namespace std;
 
-static LogWriter vlog("Security");
+static core::LogWriter vlog("Security");
 
 #ifdef HAVE_GNUTLS
-StringParameter Security::GnuTLSPriority("GnuTLSPriority",
+core::StringParameter Security::GnuTLSPriority("GnuTLSPriority",
   "GnuTLS priority string that controls the TLS session’s handshake algorithms",
   "");
 #endif
@@ -59,65 +44,59 @@ Security::Security()
 {
 }
 
-Security::Security(StringParameter &secTypes)
+Security::Security(core::StringParameter& secTypes)
 {
   enabledSecTypes = parseSecTypes(secTypes);
 }
 
 const std::list<uint8_t> Security::GetEnabledSecTypes(void)
 {
-  list<uint8_t> result;
-  list<uint32_t>::iterator i;
+  std::list<uint8_t> result;
 
   /* Partial workaround for Vino's stupid behaviour. It doesn't allow
    * the basic authentication types as part of the VeNCrypt handshake,
    * making it impossible for a client to do opportunistic encryption.
    * At least make it possible to connect when encryption is explicitly
    * disabled. */
-  for (i = enabledSecTypes.begin(); i != enabledSecTypes.end(); i++) {
-    if (*i >= 0x100) {
+  for (uint32_t type : enabledSecTypes) {
+    if (type >= 0x100) {
       result.push_back(secTypeVeNCrypt);
       break;
     }
   }
 
-  for (i = enabledSecTypes.begin(); i != enabledSecTypes.end(); i++)
-    if (*i < 0x100)
-      result.push_back(*i);
+  for (uint32_t type : enabledSecTypes)
+    if (type < 0x100)
+      result.push_back(type);
 
   return result;
 }
 
 const std::list<uint32_t> Security::GetEnabledExtSecTypes(void)
 {
-  list<uint32_t> result;
-  list<uint32_t>::iterator i;
+  std::list<uint32_t> result;
 
-  for (i = enabledSecTypes.begin(); i != enabledSecTypes.end(); i++)
-    if (*i != secTypeVeNCrypt) /* Do not include VeNCrypt type to avoid loops */
-      result.push_back(*i);
+  for (uint32_t type : enabledSecTypes)
+    if (type != secTypeVeNCrypt) /* Do not include VeNCrypt type to avoid loops */
+      result.push_back(type);
 
   return result;
 }
 
 void Security::EnableSecType(uint32_t secType)
 {
-  list<uint32_t>::iterator i;
-
-  for (i = enabledSecTypes.begin(); i != enabledSecTypes.end(); i++)
-    if (*i == secType)
-      return;
+  if (std::find(enabledSecTypes.begin(), enabledSecTypes.end(),
+                secType) != enabledSecTypes.end())
+    return;
 
   enabledSecTypes.push_back(secType);
 }
 
 bool Security::IsSupported(uint32_t secType)
 {
-  list<uint32_t>::iterator i;
-
-  for (i = enabledSecTypes.begin(); i != enabledSecTypes.end(); i++)
-    if (*i == secType)
-      return true;
+  if (std::find(enabledSecTypes.begin(), enabledSecTypes.end(),
+                secType) != enabledSecTypes.end())
+    return true;
   if (secType == secTypeVeNCrypt)
     return true;
 
@@ -126,15 +105,14 @@ bool Security::IsSupported(uint32_t secType)
 
 char *Security::ToString(void)
 {
-  list<uint32_t>::iterator i;
   static char out[128]; /* Should be enough */
   bool firstpass = true;
   const char *name;
 
   memset(out, 0, sizeof(out));
 
-  for (i = enabledSecTypes.begin(); i != enabledSecTypes.end(); i++) {
-    name = secTypeName(*i);
+  for (uint32_t type : enabledSecTypes) {
+    name = secTypeName(type);
     if (name[0] == '[') /* Unknown security type */
       continue;
 
@@ -207,7 +185,7 @@ std::list<uint32_t> rfb::parseSecTypes(const char* types_)
 {
   std::list<uint32_t> result;
   std::vector<std::string> types;
-  types = split(types_, ',');
+  types = core::split(types_, ',');
   for (size_t i = 0; i < types.size(); i++) {
     uint32_t typeNum = secTypeNum(types[i].c_str());
     if (typeNum != secTypeInvalid)

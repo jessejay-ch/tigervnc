@@ -25,19 +25,21 @@
 #ifndef __SSECURITYVENCRYPT_H__
 #define __SSECURITYVENCRYPT_H__
 
-#include <rfb/SSecurityStack.h>
-#include <rfb/SConnection.h>
+#include <rfb/SSecurity.h>
 
 namespace rfb {
+
+  class SConnection;
+  class SecurityServer;
 
   class SSecurityVeNCrypt : public SSecurity {
   public:
     SSecurityVeNCrypt(SConnection* sc, SecurityServer *sec);
     ~SSecurityVeNCrypt();
-    virtual bool processMsg();
-    virtual int getType() const { return chosenType; }
-    virtual const char* getUserName() const;
-    virtual SConnection::AccessRights getAccessRights() const;
+    bool processMsg() override;
+    int getType() const override { return chosenType; }
+    const char* getUserName() const override;
+    AccessRights getAccessRights() const override;
 
   protected:
     SSecurity *ssecurity;

@@ -28,7 +28,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #define errorNumber WSAGetLastError()
-#include <os/winerrno.h>
+#include <core/winerrno.h>
 #else
 #include <sys/types.h>
 #include <unistd.h>
@@ -44,17 +44,22 @@
 #include <sys/select.h>
 #endif
 
-#include <rdr/FdOutStream.h>
-#include <rdr/Exception.h>
-#include <rfb/util.h>
+#include <core/Exception.h>
+#include <core/time.h>
 
+#include <rdr/FdOutStream.h>
 
 using namespace rdr;
 
 FdOutStream::FdOutStream(int fd_)
-  : BufferedOutStream(false), fd(fd_)
+#ifdef TCP_CORK
+  : BufferedOutStream(false),
+#else
+  : BufferedOutStream(true),
+#endif
+  fd(fd_)
 {
-  gettimeofday(&lastWrite, NULL);
+  gettimeofday(&lastWrite, nullptr);
 }
 
 FdOutStream::~FdOutStream()
@@ -63,7 +68,7 @@ FdOutStream::~FdOutStream()
 
 unsigned FdOutStream::getIdleTime()
 {
-  return rfb::msSince(&lastWrite);
+  return core::msSince(&lastWrite);
 }
 
 void FdOutStream::cork(bool enable)
@@ -78,7 +83,7 @@ void FdOutStream::cork(bool enable)
 
 bool FdOutStream::flushBuffer()
 {
-  size_t n = writeFd((const void*) sentUpTo, ptr - sentUpTo);
+  size_t n = writeFd(sentUpTo, ptr - sentUpTo);
   if (n == 0)
     return false;
 
@@ -96,7 +101,7 @@ bool FdOutStream::flushBuffer()
 // returning EINTR.
 //
 
-size_t FdOutStream::writeFd(const void* data, size_t length)
+size_t FdOutStream::writeFd(const uint8_t* data, size_t length)
 {
   int n;
 
@@ -108,11 +113,11 @@ size_t FdOutStream::writeFd(const void* data, size_t length)
 
     FD_ZERO(&fds);
     FD_SET(fd, &fds);
-    n = select(fd+1, 0, &fds, 0, &tv);
+    n = select(fd+1, nullptr, &fds, nullptr, &tv);
   } while (n < 0 && errorNumber == EINTR);
 
   if (n < 0)
-    throw SystemException("select", errorNumber);
+    throw core::socket_error("select", errorNumber);
 
   if (n == 0)
     return 0;
@@ -129,9 +134,9 @@ size_t FdOutStream::writeFd(const void* data, size_t length)
   } while (n < 0 && (errorNumber == EINTR));
 
   if (n < 0)
-    throw SystemException("write", errorNumber);
+    throw core::socket_error("write", errorNumber);
 
-  gettimeofday(&lastWrite, NULL);
+  gettimeofday(&lastWrite, nullptr);
 
   return n;
 }

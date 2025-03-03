@@ -22,6 +22,8 @@
 #include <config.h>
 #endif
 
+#include <core/string.h>
+
 #include <rdr/TLSException.h>
 
 #include <string.h>
@@ -33,8 +35,10 @@
 using namespace rdr;
 
 #ifdef HAVE_GNUTLS
-TLSException::TLSException(const char* s, int err_)
-  : Exception("%s: %s (%d)", s, gnutls_strerror(err_), err_), err(err_)
+tls_error::tls_error(const char* s, int err_) noexcept
+  : std::runtime_error(core::format("%s: %s (%d)", s,
+                                    gnutls_strerror(err_), err_)),
+    err(err_)
 {
 }
 #endif /* HAVE_GNUTLS */

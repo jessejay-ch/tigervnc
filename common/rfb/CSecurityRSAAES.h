@@ -25,25 +25,31 @@
 #endif
 
 #include <nettle/rsa.h>
+
 #include <rfb/CSecurity.h>
 #include <rfb/Security.h>
-#include <rfb/UserMsgBox.h>
-#include <rdr/InStream.h>
-#include <rdr/OutStream.h>
-#include <rdr/RandomStream.h>
+
+namespace core { class IntParameter; }
+
+namespace rdr {
+  class InStream;
+  class OutStream;
+  class AESInStream;
+  class AESOutStream;
+}
 
 namespace rfb {
-  class UserMsgBox;
+
   class CSecurityRSAAES : public CSecurity {
   public:
     CSecurityRSAAES(CConnection* cc, uint32_t secType,
                     int keySize, bool isAllEncrypted);
     virtual ~CSecurityRSAAES();
-    virtual bool processMsg();
-    virtual int getType() const { return secType; }
-    virtual bool isSecure() const { return secType == secTypeRA256; }
+    bool processMsg() override;
+    int getType() const override { return secType; }
+    bool isSecure() const override { return secType == secTypeRA256; }
 
-    static IntParameter RSAKeyLength;
+    static core::IntParameter RSAKeyLength;
 
   private:
     void cleanup();
@@ -76,14 +82,13 @@ namespace rfb {
     uint8_t serverRandom[32];
     uint8_t clientRandom[32];
 
-    rdr::InStream* rais;
-    rdr::OutStream* raos;
+    rdr::AESInStream* rais;
+    rdr::AESOutStream* raos;
 
     rdr::InStream* rawis;
     rdr::OutStream* rawos;
-
-    rdr::RandomStream rs;
   };
+
 }
 
 #endif

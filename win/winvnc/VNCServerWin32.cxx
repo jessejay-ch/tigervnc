@@ -27,15 +27,18 @@
 #include <winvnc/ListConnInfo.h>
 #include <winvnc/STrayIcon.h>
 
-#include <os/Mutex.h>
+#include <core/LogWriter.h>
+#include <core/Mutex.h>
+
+#include <network/TcpSocket.h>
 
 #include <rfb_win32/ComputerName.h>
 #include <rfb_win32/CurrentUser.h>
 #include <rfb_win32/Service.h>
 
-#include <rfb/Hostname.h>
-#include <rfb/LogWriter.h>
+#include <rfb/SConnection.h>
 
+using namespace core;
 using namespace rfb;
 using namespace win32;
 using namespace winvnc;
@@ -61,18 +64,18 @@ static BoolParameter showTrayIcon("ShowTrayIcon",
 
 VNCServerWin32::VNCServerWin32()
   : command(NoCommand),
-    commandEvent(CreateEvent(0, TRUE, FALSE, 0)),
+    commandEvent(CreateEvent(nullptr, TRUE, FALSE, nullptr)),
     sessionEvent(isServiceProcess() ?
-      CreateEvent(0, FALSE, FALSE, "Global\\SessionEventTigerVNC") : 0),
+      CreateEvent(nullptr, FALSE, FALSE, "Global\\SessionEventTigerVNC") : nullptr),
     vncServer(ComputerName().buf, &desktop),
     thread_id(-1), runServer(false), isDesktopStarted(false),
-    config(&sockMgr), rfbSock(&sockMgr), trayIcon(0),
-    queryConnectDialog(0)
+    config(&sockMgr), rfbSock(&sockMgr), trayIcon(nullptr),
+    queryConnectDialog(nullptr)
 {
-  commandLock = new os::Mutex;
-  commandSig = new os::Condition(commandLock);
+  commandLock = new Mutex;
+  commandSig = new Condition(commandLock);
 
-  runLock = new os::Mutex;
+  runLock = new Mutex;
 
   // Initialise the desktop
   desktop.setStatusLocation(&isDesktopStarted);
@@ -92,7 +95,7 @@ VNCServerWin32::~VNCServerWin32() {
   delete trayIcon;
 
   // Stop the SDisplay from updating our state
-  desktop.setStatusLocation(0);
+  desktop.setStatusLocation(nullptr);
 
   // Join the Accept/Reject dialog thread
   if (queryConnectDialog) {
@@ -112,9 +115,9 @@ void VNCServerWin32::processAddressChange() {
     return;
 
   // Tool-tip prefix depends on server mode
-  const char* prefix = "VNC Server (User):";
+  const char* prefix = "VNC server (user):";
   if (isServiceProcess())
-    prefix = "VNC Server (Service):";
+    prefix = "VNC server (service):";
 
   // Fetch the list of addresses
   std::list<std::string> addrs;
@@ -158,7 +161,7 @@ void VNCServerWin32::regConfigChanged() {
 
 int VNCServerWin32::run() {
   {
-    os::AutoMutex a(runLock);
+    AutoMutex a(runLock);
     thread_id = GetCurrentThreadId();
     runServer = true;
   }
@@ -179,17 +182,16 @@ int VNCServerWin32::run() {
   // - Set the address-changed handler for the RFB socket
   rfbSock.setAddressChangeNotifier(this);
 
-  DWORD result = 0;
+  int result = 0;
   try {
     vlog.debug("Entering message loop");
 
     // - Run the server until we're told to quit
     MSG msg;
-    int result = 0;
     while (runServer) {
-      result = sockMgr.getMessage(&msg, NULL, 0, 0);
+      result = sockMgr.getMessage(&msg, nullptr, 0, 0);
       if (result < 0)
-        throw rdr::SystemException("getMessage", GetLastError());
+        throw core::win32_error("getMessage", GetLastError());
       if (!isServiceProcess() && (result == 0))
         break;
       TranslateMessage(&msg);
@@ -197,15 +199,15 @@ int VNCServerWin32::run() {
     }
 
     vlog.debug("Server exited cleanly");
-  } catch (rdr::SystemException &s) {
-    vlog.error("%s", s.str());
+  } catch (core::win32_error &s) {
+    vlog.error("%s", s.what());
     result = s.err;
-  } catch (rdr::Exception &e) {
-    vlog.error("%s", e.str());
+  } catch (std::exception &e) {
+    vlog.error("%s", e.what());
   }
 
   {
-    os::AutoMutex a(runLock);
+    AutoMutex a(runLock);
     runServer = false;
     thread_id = (DWORD)-1;
   }
@@ -214,7 +216,7 @@ int VNCServerWin32::run() {
 }
 
 void VNCServerWin32::stop() {
-  os::AutoMutex a(runLock);
+  AutoMutex a(runLock);
   runServer = false;
   if (thread_id != (DWORD)-1)
     PostThreadMessage(thread_id, WM_QUIT, 0, 0);
@@ -226,7 +228,7 @@ bool VNCServerWin32::disconnectClients(const char* reason) {
 }
 
 bool VNCServerWin32::addNewClient(const char* client) {
-  TcpSocket* sock = 0;
+  TcpSocket* sock = nullptr;
   try {
     std::string hostname;
     int port;
@@ -254,7 +256,7 @@ void VNCServerWin32::queryConnection(network::Socket* sock,
                                      const char* userName)
 {
   if (queryOnlyIfLoggedOn && CurrentUserToken().noUserLoggedOn()) {
-    vncServer.approveConnection(sock, true, NULL);
+    vncServer.approveConnection(sock, true, nullptr);
     return;
   }
   if (queryConnectDialog) {
@@ -266,12 +268,12 @@ void VNCServerWin32::queryConnection(network::Socket* sock,
 }
 
 void VNCServerWin32::queryConnectionComplete() {
-  queueCommand(QueryConnectionComplete, 0, 0, false);
+  queueCommand(QueryConnectionComplete, nullptr, 0, false);
 }
 
 
 bool VNCServerWin32::queueCommand(Command cmd, const void* data, int len, bool wait) {
-  os::AutoMutex a(commandLock);
+  AutoMutex a(commandLock);
   while (command != NoCommand)
     commandSig->wait();
   command = cmd;
@@ -292,7 +294,7 @@ void VNCServerWin32::processEvent(HANDLE event_) {
   if (event_ == commandEvent.h) {
     // If there is no command queued then return immediately
     {
-      os::AutoMutex a(commandLock);
+      AutoMutex a(commandLock);
       if (command == NoCommand)
         return;
     }
@@ -301,12 +303,12 @@ void VNCServerWin32::processEvent(HANDLE event_) {
     switch (command) {
 
     case DisconnectClients:
-      // Disconnect all currently active VNC Viewers
+      // Disconnect all currently active VNC viewers
       vncServer.closeClients((const char*)commandData);
       break;
 
     case AddClient:
-      // Make a reverse connection to a VNC Viewer
+      // Make a reverse connection to a VNC viewer
       sockMgr.addSocket((network::Socket*)commandData, &vncServer);
       break;
   case GetClientsInfo:
@@ -324,16 +326,16 @@ void VNCServerWin32::processEvent(HANDLE event_) {
                                   "Connection rejected by user");
       queryConnectDialog->wait();
       delete queryConnectDialog;
-      queryConnectDialog = 0;
+      queryConnectDialog = nullptr;
       break;
 
     default:
-      vlog.error("unknown command %d queued", command);
+      vlog.error("Unknown command %d queued", command);
     };
 
     // Clear the command and signal completion
     {
-      os::AutoMutex a(commandLock);
+      AutoMutex a(commandLock);
       command = NoCommand;
       commandSig->signal();
     }
@@ -363,11 +365,11 @@ void VNCServerWin32::getConnInfo(ListConnInfo * listConn)
 
     if (!conn->authenticated())
       status = 3;
-    else if (conn->accessCheck(rfb::SConnection::AccessPtrEvents |
-                               rfb::SConnection::AccessKeyEvents |
-                               rfb::SConnection::AccessView))
+    else if (conn->accessCheck(rfb::AccessPtrEvents |
+                               rfb::AccessKeyEvents |
+                               rfb::AccessView))
       status = 0;
-    else if (conn->accessCheck(rfb::SConnection::AccessView))
+    else if (conn->accessCheck(rfb::AccessView))
       status = 1;
     else
       status = 2;
@@ -396,31 +398,30 @@ void VNCServerWin32::setConnStatus(ListConnInfo* listConn)
 
     status = listConn->iGetStatus();
     if (status == 3) {
-      conn->close(0);
+      conn->close(nullptr);
     } else {
-      rfb::SConnection::AccessRights ar;
+      rfb::AccessRights ar;
 
-      ar = rfb::SConnection::AccessDefault;
+      ar = rfb::AccessDefault;
 
       switch (status) {
       case 0:
-        ar |= rfb::SConnection::AccessPtrEvents |
-              rfb::SConnection::AccessKeyEvents |
-              rfb::SConnection::AccessView;
+        ar |= rfb::AccessPtrEvents |
+              rfb::AccessKeyEvents |
+              rfb::AccessView;
         break;
       case 1:
-        ar |= rfb::SConnection::AccessView;
-        ar &= ~(rfb::SConnection::AccessPtrEvents |
-                rfb::SConnection::AccessKeyEvents);
+        ar |= rfb::AccessView;
+        ar &= ~(rfb::AccessPtrEvents |
+                rfb::AccessKeyEvents);
         break;
       case 2:
-        ar &= ~(rfb::SConnection::AccessPtrEvents |
-                rfb::SConnection::AccessKeyEvents |
-                rfb::SConnection::AccessView);
+        ar &= ~(rfb::AccessPtrEvents |
+                rfb::AccessKeyEvents |
+                rfb::AccessView);
         break;
       }
       conn->setAccessRights(ar);
-      conn->framebufferUpdateRequest(vncServer.getPixelBuffer()->getRect(), false);
     }
   }
 }

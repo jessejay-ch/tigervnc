@@ -22,10 +22,13 @@
 #include <config.h>
 #endif
 
+#include <core/LogWriter.h>
+
 #include <rfb_win32/WMWindowCopyRect.h>
-#include <rfb/LogWriter.h>
+
 #include <windows.h>
 
+using namespace core;
 using namespace rfb;
 using namespace rfb::win32;
 
@@ -33,7 +36,7 @@ static LogWriter vlog("WMCopyRect");
 
 // -=- WMHooks class
 
-rfb::win32::WMCopyRect::WMCopyRect() : ut(0), fg_window(0) {
+rfb::win32::WMCopyRect::WMCopyRect() : ut(nullptr), fg_window(nullptr) {
 }
 
 bool
@@ -49,17 +52,17 @@ rfb::win32::WMCopyRect::processEvent() {
           // Window has moved - mark both the previous and new position as changed
           // (we can't use add_copied() here because we aren't that properly synced
           // with the actual state of the framebuffer)
-          ut->add_changed(Region(winrect));
-          ut->add_changed(Region(fg_window_rect));
+          ut->add_changed(winrect);
+          ut->add_changed(fg_window_rect);
         }
       }
       fg_window = window;
       fg_window_rect = winrect;
     } else {
-      fg_window = 0;
+      fg_window = nullptr;
     }
   } else {
-    fg_window = 0;
+    fg_window = nullptr;
   }
   return false;
 }

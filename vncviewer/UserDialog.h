@@ -19,11 +19,7 @@
 #ifndef __USERDIALOG_H__
 #define __USERDIALOG_H__
 
-#include <rfb/UserPasswdGetter.h>
-#include <rfb/UserMsgBox.h>
-
-class UserDialog : public rfb::UserPasswdGetter,
-                   public rfb::UserMsgBox
+class UserDialog
 {
 public:
   UserDialog();
@@ -35,8 +31,13 @@ public:
                      std::string* password);
 
   // UserMsgBox callbacks
+  bool showMsgBox(rfb::MsgBoxFlags flags, const char* title, const char* text);
 
-  bool showMsgBox(int flags, const char* title, const char* text);
+  void resetPassword();
+
+private:
+  static std::string savedUsername;
+  static std::string savedPassword;
 };
 
 #endif

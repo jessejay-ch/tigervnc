@@ -28,7 +28,6 @@
 #define __RDR_MEMINSTREAM_H__
 
 #include <rdr/InStream.h>
-#include <rdr/Exception.h>
 
 namespace rdr {
 
@@ -36,8 +35,8 @@ namespace rdr {
 
   public:
 
-    MemInStream(const void* data, size_t len, bool deleteWhenDone_=false)
-      : start((const uint8_t*)data), deleteWhenDone(deleteWhenDone_)
+    MemInStream(const uint8_t* data, size_t len, bool deleteWhenDone_=false)
+      : start(data), deleteWhenDone(deleteWhenDone_)
     {
       ptr = start;
       end = start + len;
@@ -54,12 +53,12 @@ namespace rdr {
         delete [] start;
     }
 
-    size_t pos() { return ptr - start; }
+    size_t pos() override { return ptr - start; }
     void reposition(size_t pos) { ptr = start + pos; }
 
   private:
 
-    bool overrun(size_t /*needed*/) { throw EndOfStream(); }
+    bool overrun(size_t /*needed*/) override { throw end_of_stream(); }
     const uint8_t* start;
     bool deleteWhenDone;
   };

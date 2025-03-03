@@ -23,16 +23,18 @@
 #include <config.h>
 #endif
 
-#include <rdr/Exception.h>
+#include <core/Exception.h>
+#include <core/LogWriter.h>
+
 #include <rdr/TLSException.h>
 #include <rdr/TLSInStream.h>
-#include <rfb/LogWriter.h>
+
 #include <errno.h>
 
 #ifdef HAVE_GNUTLS 
 using namespace rdr;
 
-static rfb::LogWriter vlog("TLSInStream");
+static core::LogWriter vlog("TLSInStream");
 
 ssize_t TLSInStream::pull(gnutls_transport_ptr_t str, void* data, size_t size)
 {
@@ -41,7 +43,7 @@ ssize_t TLSInStream::pull(gnutls_transport_ptr_t str, void* data, size_t size)
 
   self->streamEmpty = false;
   delete self->saved_exception;
-  self->saved_exception = NULL;
+  self->saved_exception = nullptr;
 
   try {
     if (!in->hasData(1)) {
@@ -53,18 +55,18 @@ ssize_t TLSInStream::pull(gnutls_transport_ptr_t str, void* data, size_t size)
     if (in->avail() < size)
       size = in->avail();
   
-    in->readBytes(data, size);
-  } catch (EndOfStream&) {
+    in->readBytes((uint8_t*)data, size);
+  } catch (end_of_stream&) {
     return 0;
-  } catch (SystemException &e) {
-    vlog.error("Failure reading TLS data: %s", e.str());
+  } catch (core::socket_error& e) {
+    vlog.error("Failure reading TLS data: %s", e.what());
     gnutls_transport_set_errno(self->session, e.err);
-    self->saved_exception = new SystemException(e);
+    self->saved_exception = new core::socket_error(e);
     return -1;
-  } catch (Exception& e) {
-    vlog.error("Failure reading TLS data: %s", e.str());
+  } catch (std::exception& e) {
+    vlog.error("Failure reading TLS data: %s", e.what());
     gnutls_transport_set_errno(self->session, EINVAL);
-    self->saved_exception = new Exception(e);
+    self->saved_exception = new std::runtime_error(e.what());
     return -1;
   }
 
@@ -72,7 +74,7 @@ ssize_t TLSInStream::pull(gnutls_transport_ptr_t str, void* data, size_t size)
 }
 
 TLSInStream::TLSInStream(InStream* _in, gnutls_session_t _session)
-  : session(_session), in(_in), saved_exception(NULL)
+  : session(_session), in(_in), saved_exception(nullptr)
 {
   gnutls_transport_ptr_t recv, send;
 
@@ -83,7 +85,7 @@ TLSInStream::TLSInStream(InStream* _in, gnutls_session_t _session)
 
 TLSInStream::~TLSInStream()
 {
-  gnutls_transport_set_pull_function(session, NULL);
+  gnutls_transport_set_pull_function(session, nullptr);
 
   delete saved_exception;
 }
@@ -117,14 +119,18 @@ size_t TLSInStream::readTLS(uint8_t* buf, size_t len)
     break;
   };
 
-  if (n == GNUTLS_E_PULL_ERROR)
-    throw *saved_exception;
+  if (n == GNUTLS_E_PULL_ERROR) {
+    if (dynamic_cast<core::socket_error*>(saved_exception))
+      throw *dynamic_cast<core::socket_error*>(saved_exception);
+    else
+      throw std::runtime_error(saved_exception->what());
+  }
 
   if (n < 0)
-    throw TLSException("readTLS", n);
+    throw tls_error("readTLS", n);
 
   if (n == 0)
-    throw EndOfStream();
+    throw end_of_stream();
 
   return n;
 }

@@ -1,5 +1,4 @@
 include_directories(${CMAKE_SOURCE_DIR}/common)
-include_directories(SYSTEM ${GETTEXT_INCLUDE_DIR})
 
 add_library(test_util STATIC util.cxx)
 
@@ -7,13 +6,12 @@ add_executable(convperf convperf.cxx)
 target_link_libraries(convperf test_util rfb)
 
 add_executable(decperf decperf.cxx)
-target_link_libraries(decperf test_util rfb)
+target_link_libraries(decperf test_util rdr rfb)
 
 add_executable(encperf encperf.cxx)
-target_link_libraries(encperf test_util rfb)
+target_link_libraries(encperf test_util core rdr rfb)
 
 if (BUILD_VIEWER)
-  include_directories(SYSTEM ${FLTK_INCLUDE_DIR})
   add_executable(fbperf
     fbperf.cxx
     ${CMAKE_SOURCE_DIR}/vncviewer/PlatformPixelBuffer.cxx
@@ -28,7 +26,9 @@ if (BUILD_VIEWER)
   else()
     target_sources(fbperf PRIVATE ${CMAKE_SOURCE_DIR}/vncviewer/Surface_X11.cxx)
   endif()
-  target_link_libraries(fbperf test_util rfb ${FLTK_LIBRARIES} ${GETTEXT_LIBRARIES})
+  target_include_directories(fbperf SYSTEM PUBLIC ${FLTK_INCLUDE_DIR})
+  target_include_directories(fbperf SYSTEM PUBLIC ${GETTEXT_INCLUDE_DIR})
+  target_link_libraries(fbperf test_util core rfb ${FLTK_LIBRARIES} ${GETTEXT_LIBRARIES})
   if(WIN32)
     target_link_libraries(fbperf msimg32)
   endif()

@@ -1,12 +1,8 @@
-include_directories(${CMAKE_SOURCE_DIR}/common)
-include_directories(SYSTEM ${ZLIB_INCLUDE_DIRS})
-
 add_library(rdr STATIC
   AESInStream.cxx
   AESOutStream.cxx
   BufferedInStream.cxx
   BufferedOutStream.cxx
-  Exception.cxx
   FdInStream.cxx
   FdOutStream.cxx
   FileInStream.cxx
@@ -19,14 +15,17 @@ add_library(rdr STATIC
   ZlibInStream.cxx
   ZlibOutStream.cxx)
 
-target_link_libraries(rdr ${ZLIB_LIBRARIES} os)
+target_include_directories(rdr PUBLIC ${CMAKE_SOURCE_DIR}/common)
+target_include_directories(rdr SYSTEM PUBLIC ${ZLIB_INCLUDE_DIRS})
+target_link_libraries(rdr core)
+target_link_libraries(rdr ${ZLIB_LIBRARIES})
 
 if(GNUTLS_FOUND)
-  include_directories(SYSTEM ${GNUTLS_INCLUDE_DIR})
+  target_include_directories(rdr SYSTEM PUBLIC ${GNUTLS_INCLUDE_DIR})
   target_link_libraries(rdr ${GNUTLS_LIBRARIES})
 endif()
 if (NETTLE_FOUND)
-  include_directories(SYSTEM ${NETTLE_INCLUDE_DIRS})
+  target_include_directories(rdr SYSTEM PUBLIC ${NETTLE_INCLUDE_DIRS})
   target_link_libraries(rdr ${NETTLE_LIBRARIES})
   target_link_directories(rdr PUBLIC ${NETTLE_LIBRARY_DIRS})
 endif()

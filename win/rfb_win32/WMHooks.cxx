@@ -22,17 +22,18 @@
 #include <config.h>
 #endif
 
-#include <os/Mutex.h>
-#include <os/Thread.h>
+#include <core/LogWriter.h>
+#include <core/Mutex.h>
+#include <core/Thread.h>
 
 #include <rfb_win32/WMHooks.h>
 #include <rfb_win32/Service.h>
 #include <rfb_win32/MsgWindow.h>
 #include <rfb_win32/IntervalTimer.h>
-#include <rfb/LogWriter.h>
 
 #include <list>
 
+using namespace core;
 using namespace rfb;
 using namespace rfb::win32;
 
@@ -65,88 +66,88 @@ static WM_Hooks_EnableRealInputs_proto WM_Hooks_EnableRealInputs;
 
 static void LoadHooks()
 {
-  if (hooksLibrary != NULL)
+  if (hooksLibrary != nullptr)
     return;
 
   hooksLibrary = LoadLibrary("wm_hooks.dll");
-  if (hooksLibrary == NULL)
+  if (hooksLibrary == nullptr)
     return;
 
   WM_Hooks_WindowChanged = (WM_Hooks_WMVAL_proto)(void*)GetProcAddress(hooksLibrary, "WM_Hooks_WindowChanged");
-  if (WM_Hooks_WindowChanged == NULL)
+  if (WM_Hooks_WindowChanged == nullptr)
     goto error;
   WM_Hooks_WindowBorderChanged = (WM_Hooks_WMVAL_proto)(void*)GetProcAddress(hooksLibrary, "WM_Hooks_WindowBorderChanged");
-  if (WM_Hooks_WindowBorderChanged == NULL)
+  if (WM_Hooks_WindowBorderChanged == nullptr)
     goto error;
   WM_Hooks_WindowClientAreaChanged = (WM_Hooks_WMVAL_proto)(void*)GetProcAddress(hooksLibrary, "WM_Hooks_WindowClientAreaChanged");
-  if (WM_Hooks_WindowClientAreaChanged == NULL)
+  if (WM_Hooks_WindowClientAreaChanged == nullptr)
     goto error;
   WM_Hooks_RectangleChanged = (WM_Hooks_WMVAL_proto)(void*)GetProcAddress(hooksLibrary, "WM_Hooks_RectangleChanged");
-  if (WM_Hooks_RectangleChanged == NULL)
+  if (WM_Hooks_RectangleChanged == nullptr)
     goto error;
 #ifdef _DEBUG
   WM_Hooks_Diagnostic = (WM_Hooks_WMVAL_proto)(void*)GetProcAddress(hooksLibrary, "WM_Hooks_Diagnostic");
-  if (WM_Hooks_Diagnostic == NULL)
+  if (WM_Hooks_Diagnostic == nullptr)
     goto error;
 #endif
 
   WM_Hooks_Install = (WM_Hooks_Install_proto)(void*)GetProcAddress(hooksLibrary, "WM_Hooks_Install");
-  if (WM_Hooks_Install == NULL)
+  if (WM_Hooks_Install == nullptr)
     goto error;
   WM_Hooks_Remove = (WM_Hooks_Remove_proto)(void*)GetProcAddress(hooksLibrary, "WM_Hooks_Remove");
-  if (WM_Hooks_Remove == NULL)
+  if (WM_Hooks_Remove == nullptr)
     goto error;
 #ifdef _DEBUG
   WM_Hooks_SetDiagnosticRange = (WM_Hooks_SetDiagnosticRange_proto)(void*)GetProcAddress(hooksLibrary, "WM_Hooks_SetDiagnosticRange");
-  if (WM_Hooks_SetDiagnosticRange == NULL)
+  if (WM_Hooks_SetDiagnosticRange == nullptr)
     goto error;
 #endif
 
   WM_Hooks_EnableRealInputs = (WM_Hooks_EnableRealInputs_proto)(void*)GetProcAddress(hooksLibrary, "WM_Hooks_EnableRealInputs");
-  if (WM_Hooks_EnableRealInputs == NULL)
+  if (WM_Hooks_EnableRealInputs == nullptr)
     goto error;
 
   return;
 
 error:
   FreeLibrary(hooksLibrary);
-  hooksLibrary = NULL;
+  hooksLibrary = nullptr;
 }
 
 
-class WMHooksThread : public os::Thread {
+class WMHooksThread : public Thread {
 public:
   WMHooksThread() : active(true), thread_id(-1) { }
   void stop();
   DWORD getThreadId() { return thread_id; }
 protected:
-  virtual void worker();
+  void worker() override;
 protected:
   bool active;
   DWORD thread_id;
 };
 
-static WMHooksThread* hook_mgr = 0;
+static WMHooksThread* hook_mgr = nullptr;
 static std::list<WMHooks*> hooks;
-static os::Mutex hook_mgr_lock;
+static Mutex hook_mgr_lock;
 
 
 static bool StartHookThread() {
   if (hook_mgr)
     return true;
-  if (hooksLibrary == NULL)
+  if (hooksLibrary == nullptr)
     return false;
-  vlog.debug("creating thread");
+  vlog.debug("Creating thread");
   hook_mgr = new WMHooksThread();
   hook_mgr->start();
   while (hook_mgr->getThreadId() == (DWORD)-1)
     Sleep(0);
-  vlog.debug("installing hooks");
+  vlog.debug("Installing hooks");
   if (!WM_Hooks_Install(hook_mgr->getThreadId(), 0)) {
-    vlog.error("failed to initialise hooks");
+    vlog.error("Failed to initialise hooks");
     hook_mgr->stop();
     delete hook_mgr;
-    hook_mgr = 0;
+    hook_mgr = nullptr;
     return false;
   }
   return true;
@@ -157,16 +158,16 @@ static void StopHookThread() {
     return;
   if (!hooks.empty())
     return;
-  vlog.debug("closing thread");
+  vlog.debug("Closing thread");
   hook_mgr->stop();
   delete hook_mgr;
-  hook_mgr = 0;
+  hook_mgr = nullptr;
 }
 
 
 static bool AddHook(WMHooks* hook) {
-  vlog.debug("adding hook");
-  os::AutoMutex a(&hook_mgr_lock);
+  vlog.debug("Adding hook");
+  AutoMutex a(&hook_mgr_lock);
   if (!StartHookThread())
     return false;
   hooks.push_back(hook);
@@ -175,8 +176,8 @@ static bool AddHook(WMHooks* hook) {
 
 static bool RemHook(WMHooks* hook) {
   {
-    vlog.debug("removing hook");
-    os::AutoMutex a(&hook_mgr_lock);
+    vlog.debug("Removing hook");
+    AutoMutex a(&hook_mgr_lock);
     hooks.remove(hook);
   }
   StopHookThread();
@@ -184,7 +185,7 @@ static bool RemHook(WMHooks* hook) {
 }
 
 static void NotifyHooksRegion(const Region& r) {
-  os::AutoMutex a(&hook_mgr_lock);
+  AutoMutex a(&hook_mgr_lock);
   std::list<WMHooks*>::iterator i;
   for (i=hooks.begin(); i!=hooks.end(); i++)
     (*i)->NotifyHooksRegion(r);
@@ -216,11 +217,11 @@ WMHooksThread::worker() {
   Region updates[2];
   int activeRgn = 0;
 
-  vlog.debug("starting hook thread");
+  vlog.debug("Starting hook thread");
 
   thread_id = GetCurrentThreadId();
 
-  while (active && GetMessage(&msg, NULL, 0, 0)) {
+  while (active && GetMessage(&msg, nullptr, 0, 0)) {
     count++;
 
     if (msg.message == WM_TIMER) {
@@ -236,8 +237,8 @@ WMHooksThread::worker() {
       hwnd = (HWND) msg.lParam;
       if (IsWindow(hwnd) && IsWindowVisible(hwnd) && !IsIconic(hwnd) &&
         GetWindowRect(hwnd, &wrect) && !IsRectEmpty(&wrect)) {
-          updates[activeRgn].assign_union(Rect(wrect.left, wrect.top,
-                                               wrect.right, wrect.bottom));
+          updates[activeRgn].assign_union({{wrect.left, wrect.top,
+                                            wrect.right, wrect.bottom}});
           updateDelayTimer.start(updateDelayMs);
       }
 
@@ -249,8 +250,8 @@ WMHooksThread::worker() {
       {
         POINT pt = {0,0};
         if (ClientToScreen(hwnd, &pt)) {
-          updates[activeRgn].assign_union(Rect(wrect.left+pt.x, wrect.top+pt.y,
-                                               wrect.right+pt.x, wrect.bottom+pt.y));
+          updates[activeRgn].assign_union({{wrect.left+pt.x, wrect.top+pt.y,
+                                            wrect.right+pt.x, wrect.bottom+pt.y}});
           updateDelayTimer.start(updateDelayMs);
         }
       }
@@ -260,14 +261,14 @@ WMHooksThread::worker() {
       if (IsWindow(hwnd) && IsWindowVisible(hwnd) && !IsIconic(hwnd) &&
           GetWindowRect(hwnd, &wrect) && !IsRectEmpty(&wrect))
       {
-        Region changed(Rect(wrect.left, wrect.top, wrect.right, wrect.bottom));
+        Region changed({wrect.left, wrect.top, wrect.right, wrect.bottom});
         RECT crect;
         POINT pt = {0,0};
         if (GetClientRect(hwnd, &crect) && ClientToScreen(hwnd, &pt) &&
             !IsRectEmpty(&crect))
         {
-          changed.assign_subtract(Rect(crect.left+pt.x, crect.top+pt.y,
-                                       crect.right+pt.x, crect.bottom+pt.y));
+          changed.assign_subtract({{crect.left+pt.x, crect.top+pt.y,
+                                    crect.right+pt.x, crect.bottom+pt.y}});
         }
         if (!changed.is_empty()) {
           updates[activeRgn].assign_union(changed);
@@ -275,8 +276,8 @@ WMHooksThread::worker() {
         }
       }
     } else if (msg.message == rectangleMsg) {
-      Rect r = Rect(LOWORD(msg.wParam), HIWORD(msg.wParam),
-                    LOWORD(msg.lParam), HIWORD(msg.lParam));
+      Rect r(LOWORD(msg.wParam), HIWORD(msg.wParam),
+             LOWORD(msg.lParam), HIWORD(msg.lParam));
       if (!r.is_empty()) {
         updates[activeRgn].assign_union(r);
         updateDelayTimer.start(updateDelayMs);
@@ -291,22 +292,22 @@ WMHooksThread::worker() {
     }
   }
 
-  vlog.debug("stopping hook thread - processed %d events", count);
+  vlog.debug("Stopping hook thread - processed %d events", count);
   WM_Hooks_Remove(getThreadId());
 }
 
 void
 WMHooksThread::stop() {
-  vlog.debug("stopping WMHooks thread");
+  vlog.debug("Stopping WMHooks thread");
   active = false;
   PostThreadMessage(thread_id, WM_QUIT, 0, 0);
-  vlog.debug("waiting for WMHooks thread");
+  vlog.debug("Waiting for WMHooks thread");
   wait();
 }
 
 // -=- WMHooks class
 
-rfb::win32::WMHooks::WMHooks() : updateEvent(0) {
+rfb::win32::WMHooks::WMHooks() : updateEvent(nullptr) {
   LoadHooks();
 }
 
@@ -323,7 +324,7 @@ bool rfb::win32::WMHooks::setEvent(HANDLE ue) {
 
 bool rfb::win32::WMHooks::getUpdates(UpdateTracker* ut) {
   if (!updatesReady) return false;
-  os::AutoMutex a(&hook_mgr_lock);
+  AutoMutex a(&hook_mgr_lock);
   updates.copyTo(ut);
   updates.clear();
   updatesReady = false;
@@ -358,7 +359,7 @@ rfb::win32::WMBlockInput::~WMBlockInput() {
 static bool blocking = false;
 static bool blockRealInputs(bool block_) {
   // NB: Requires blockMutex to be held!
-  if (hooksLibrary == NULL)
+  if (hooksLibrary == nullptr)
     return false;
   if (block_) {
     if (blocking)
@@ -375,12 +376,12 @@ static bool blockRealInputs(bool block_) {
   return block_ == blocking;
 }
 
-static os::Mutex blockMutex;
+static Mutex blockMutex;
 static int blockCount = 0;
 
 bool rfb::win32::WMBlockInput::blockInputs(bool on) {
   if (active == on) return true;
-  os::AutoMutex a(&blockMutex);
+  AutoMutex a(&blockMutex);
   int newCount = on ? blockCount+1 : blockCount-1;
   if (!blockRealInputs(newCount > 0))
     return false;

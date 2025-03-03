@@ -20,7 +20,7 @@
 #define __RFB_WIN32_LOCALMEM_H__
 
 #include <windows.h>
-#include <rdr/Exception.h>
+#include <core/Exception.h>
 
 namespace rfb {
   namespace win32 {
@@ -28,13 +28,13 @@ namespace rfb {
     // Allocate and/or manage LocalAlloc memory.
     struct LocalMem {
       LocalMem(int size) : ptr(LocalAlloc(LMEM_FIXED, size)) {
-        if (!ptr) throw rdr::SystemException("LocalAlloc", GetLastError());
+        if (!ptr) throw core::win32_error("LocalAlloc", GetLastError());
       }
       LocalMem(void* p) : ptr(p) {}
       ~LocalMem() {LocalFree(ptr);}
       operator void*() {return ptr;}
       void* takePtr() {
-        void* t = ptr; ptr = 0; return t;
+        void* t = ptr; ptr = nullptr; return t;
       }
       void* ptr;
     };

@@ -26,7 +26,8 @@
 
 #include <stdint.h>
 
-#include <rfb/Configuration.h>
+#include <core/Configuration.h>
+
 #include <rfb/SSecurity.h>
 #include <rfb/Security.h>
 
@@ -41,22 +42,22 @@ namespace rfb {
     virtual ~VncAuthPasswdGetter() { }
   };
 
-  class VncAuthPasswdParameter : public VncAuthPasswdGetter, BinaryParameter {
+  class VncAuthPasswdParameter : public VncAuthPasswdGetter, core::BinaryParameter {
   public:
-    VncAuthPasswdParameter(const char* name, const char* desc, StringParameter* passwdFile_);
-    virtual void getVncAuthPasswd(std::string *password, std::string *readOnlyPassword);
+    VncAuthPasswdParameter(const char* name, const char* desc, core::StringParameter* passwdFile_);
+    void getVncAuthPasswd(std::string *password, std::string *readOnlyPassword) override;
   protected:
-    StringParameter* passwdFile;
+    core::StringParameter* passwdFile;
   };
 
   class SSecurityVncAuth : public SSecurity {
   public:
     SSecurityVncAuth(SConnection* sc);
-    virtual bool processMsg();
-    virtual int getType() const {return secTypeVncAuth;}
-    virtual const char* getUserName() const {return 0;}
-    virtual SConnection::AccessRights getAccessRights() const { return accessRights; }
-    static StringParameter vncAuthPasswdFile;
+    bool processMsg() override;
+    int getType() const override {return secTypeVncAuth;}
+    const char* getUserName() const override {return nullptr;}
+    AccessRights getAccessRights() const override { return accessRights; }
+    static core::StringParameter vncAuthPasswdFile;
     static VncAuthPasswdParameter vncAuthPasswd;
   private:
     bool verifyResponse(const char* password);
@@ -65,7 +66,7 @@ namespace rfb {
     uint8_t response[vncAuthChallengeSize];
     bool sentChallenge;
     VncAuthPasswdGetter* pg;
-    SConnection::AccessRights accessRights;
+    AccessRights accessRights;
   };
 }
 #endif

@@ -23,25 +23,24 @@
 #include <assert.h>
 #include <string.h>
 
+#include <core/LogWriter.h>
+#include <core/Mutex.h>
+#include <core/Region.h>
+#include <core/string.h>
+
 #include <rfb/CConnection.h>
 #include <rfb/DecodeManager.h>
 #include <rfb/Decoder.h>
 #include <rfb/Exception.h>
-#include <rfb/Region.h>
-#include <rfb/LogWriter.h>
-#include <rfb/util.h>
 
-#include <rdr/Exception.h>
 #include <rdr/MemOutStream.h>
-
-#include <os/Mutex.h>
 
 using namespace rfb;
 
-static LogWriter vlog("DecodeManager");
+static core::LogWriter vlog("DecodeManager");
 
-DecodeManager::DecodeManager(CConnection *conn) :
-  conn(conn), threadException(NULL)
+DecodeManager::DecodeManager(CConnection *conn_) :
+  conn(conn_), threadException(nullptr)
 {
   size_t cpuCount;
 
@@ -49,11 +48,11 @@ DecodeManager::DecodeManager(CConnection *conn) :
 
   memset(stats, 0, sizeof(stats));
 
-  queueMutex = new os::Mutex();
-  producerCond = new os::Condition(queueMutex);
-  consumerCond = new os::Condition(queueMutex);
+  queueMutex = new core::Mutex();
+  producerCond = new core::Condition(queueMutex);
+  consumerCond = new core::Condition(queueMutex);
 
-  cpuCount = os::Thread::getSystemCPUCount();
+  cpuCount = core::Thread::getSystemCPUCount();
   if (cpuCount == 0) {
     vlog.error("Unable to determine the number of CPU cores on this system");
     cpuCount = 1;
@@ -97,11 +96,11 @@ DecodeManager::~DecodeManager()
   delete producerCond;
   delete queueMutex;
 
-  for (size_t i = 0; i < sizeof(decoders)/sizeof(decoders[0]); i++)
-    delete decoders[i];
+  for (Decoder* decoder : decoders)
+    delete decoder;
 }
 
-bool DecodeManager::decodeRect(const Rect& r, int encoding,
+bool DecodeManager::decodeRect(const core::Rect& r, int encoding,
                                ModifiablePixelBuffer* pb)
 {
   Decoder *decoder;
@@ -110,18 +109,18 @@ bool DecodeManager::decodeRect(const Rect& r, int encoding,
 
   QueueEntry *entry;
 
-  assert(pb != NULL);
+  assert(pb != nullptr);
 
   if (!Decoder::supported(encoding)) {
     vlog.error("Unknown encoding %d", encoding);
-    throw rdr::Exception("Unknown encoding");
+    throw protocol_error("Unknown encoding");
   }
 
   if (!decoders[encoding]) {
     decoders[encoding] = Decoder::createDecoder(encoding);
     if (!decoders[encoding]) {
       vlog.error("Unknown encoding %d", encoding);
-      throw rdr::Exception("Unknown encoding");
+      throw protocol_error("Unknown encoding");
     }
   }
 
@@ -148,8 +147,8 @@ bool DecodeManager::decodeRect(const Rect& r, int encoding,
   try {
     if (!decoder->readRect(r, conn->getInStream(), conn->server, bufferStream))
       return false;
-  } catch (rdr::Exception& e) {
-    throw Exception("Error reading rect: %s", e.str());
+  } catch (std::exception& e) {
+    throw std::runtime_error(core::format("Error reading rect: %s", e.what()));
   }
 
   stats[encoding].rects++;
@@ -227,53 +226,51 @@ void DecodeManager::logStats()
     ratio = (double)stats[i].equivalent / stats[i].bytes;
 
     vlog.info("    %s: %s, %s", encodingName(i),
-              siPrefix(stats[i].rects, "rects").c_str(),
-              siPrefix(stats[i].pixels, "pixels").c_str());
+              core::siPrefix(stats[i].rects, "rects").c_str(),
+              core::siPrefix(stats[i].pixels, "pixels").c_str());
     vlog.info("    %*s  %s (1:%g ratio)",
               (int)strlen(encodingName(i)), "",
-              iecPrefix(stats[i].bytes, "B").c_str(), ratio);
+              core::iecPrefix(stats[i].bytes, "B").c_str(), ratio);
   }
 
   ratio = (double)equivalent / bytes;
 
   vlog.info("  Total: %s, %s",
-            siPrefix(rects, "rects").c_str(),
-            siPrefix(pixels, "pixels").c_str());
+            core::siPrefix(rects, "rects").c_str(),
+            core::siPrefix(pixels, "pixels").c_str());
   vlog.info("         %s (1:%g ratio)",
-            iecPrefix(bytes, "B").c_str(), ratio);
+            core::iecPrefix(bytes, "B").c_str(), ratio);
 }
 
-void DecodeManager::setThreadException(const rdr::Exception& e)
+void DecodeManager::setThreadException(const std::exception& e)
 {
-  os::AutoMutex a(queueMutex);
+  core::AutoMutex a(queueMutex);
 
-  if (threadException != NULL)
+  if (threadException != nullptr)
     return;
 
-  threadException = new rdr::Exception("Exception on worker thread: %s", e.str());
+  threadException = new std::runtime_error(
+    core::format("Exception on worker thread: %s", e.what()));
 }
 
 void DecodeManager::throwThreadException()
 {
-  os::AutoMutex a(queueMutex);
+  core::AutoMutex a(queueMutex);
 
-  if (threadException == NULL)
+  if (threadException == nullptr)
     return;
 
-  rdr::Exception e(*threadException);
+  std::runtime_error e(threadException->what());
 
   delete threadException;
-  threadException = NULL;
+  threadException = nullptr;
 
   throw e;
 }
 
-DecodeManager::DecodeThread::DecodeThread(DecodeManager* manager)
+DecodeManager::DecodeThread::DecodeThread(DecodeManager* manager_)
+  : manager(manager_), stopRequested(false)
 {
-  this->manager = manager;
-
-  stopRequested = false;
-
   start();
 }
 
@@ -285,7 +282,7 @@ DecodeManager::DecodeThread::~DecodeThread()
 
 void DecodeManager::DecodeThread::stop()
 {
-  os::AutoMutex a(manager->queueMutex);
+  core::AutoMutex a(manager->queueMutex);
 
   if (!isRunning())
     return;
@@ -305,7 +302,7 @@ void DecodeManager::DecodeThread::worker()
 
     // Look for an available entry in the work queue
     entry = findEntry();
-    if (entry == NULL) {
+    if (entry == nullptr) {
       // Wait and try again
       manager->consumerCond->wait();
       continue;
@@ -321,7 +318,7 @@ void DecodeManager::DecodeThread::worker()
       entry->decoder->decodeRect(entry->rect, entry->bufferStream->data(),
                                  entry->bufferStream->length(),
                                  *entry->server, entry->pb);
-    } catch (rdr::Exception& e) {
+    } catch (std::exception& e) {
       manager->setThreadException(e);
     } catch(...) {
       assert(false);
@@ -347,24 +344,15 @@ void DecodeManager::DecodeThread::worker()
 
 DecodeManager::QueueEntry* DecodeManager::DecodeThread::findEntry()
 {
-  std::list<DecodeManager::QueueEntry*>::iterator iter;
-  Region lockedRegion;
+  core::Region lockedRegion;
 
   if (manager->workQueue.empty())
-    return NULL;
+    return nullptr;
 
   if (!manager->workQueue.front()->active)
     return manager->workQueue.front();
 
-  for (iter = manager->workQueue.begin();
-       iter != manager->workQueue.end();
-       ++iter) {
-    DecodeManager::QueueEntry* entry;
-
-    std::list<DecodeManager::QueueEntry*>::iterator iter2;
-
-    entry = *iter;
-
+  for (DecodeManager::QueueEntry* entry : manager->workQueue) {
     // Another thread working on this?
     if (entry->active)
       goto next;
@@ -372,8 +360,10 @@ DecodeManager::QueueEntry* DecodeManager::DecodeThread::findEntry()
     // If this is an ordered decoder then make sure this is the first
     // rectangle in the queue for that decoder
     if (entry->decoder->flags & DecoderOrdered) {
-      for (iter2 = manager->workQueue.begin(); iter2 != iter; ++iter2) {
-        if (entry->encoding == (*iter2)->encoding)
+      for (DecodeManager::QueueEntry* entry2 : manager->workQueue) {
+        if (entry2 == entry)
+          break;
+        if (entry->encoding == entry2->encoding)
           goto next;
       }
     }
@@ -381,15 +371,17 @@ DecodeManager::QueueEntry* DecodeManager::DecodeThread::findEntry()
     // For a partially ordered decoder we must ask the decoder for each
     // pair of rectangles.
     if (entry->decoder->flags & DecoderPartiallyOrdered) {
-      for (iter2 = manager->workQueue.begin(); iter2 != iter; ++iter2) {
-        if (entry->encoding != (*iter2)->encoding)
+      for (DecodeManager::QueueEntry* entry2 : manager->workQueue) {
+        if (entry2 == entry)
+          break;
+        if (entry->encoding != entry2->encoding)
           continue;
         if (entry->decoder->doRectsConflict(entry->rect,
                                             entry->bufferStream->data(),
                                             entry->bufferStream->length(),
-                                            (*iter2)->rect,
-                                            (*iter2)->bufferStream->data(),
-                                            (*iter2)->bufferStream->length(),
+                                            entry2->rect,
+                                            entry2->bufferStream->data(),
+                                            entry2->bufferStream->length(),
                                             *entry->server))
           goto next;
       }
@@ -405,5 +397,5 @@ next:
     lockedRegion.assign_union(entry->affectedRegion);
   }
 
-  return NULL;
+  return nullptr;
 }

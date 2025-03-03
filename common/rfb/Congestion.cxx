@@ -49,9 +49,10 @@
 #include <linux/sockios.h>
 #endif
 
+#include <core/LogWriter.h>
+#include <core/time.h>
+
 #include <rfb/Congestion.h>
-#include <rfb/LogWriter.h>
-#include <rfb/util.h>
 
 // Debug output on what the congestion control is up to
 #undef CONGESTION_DEBUG
@@ -78,18 +79,18 @@ static inline bool isAfter(unsigned a, unsigned b) {
   return a != b && a - b <= UINT_MAX / 2;
 }
 
-static LogWriter vlog("Congestion");
+static core::LogWriter vlog("Congestion");
 
 Congestion::Congestion() :
     lastPosition(0), extraBuffer(0),
     baseRTT(-1), congWindow(INITIAL_WINDOW), inSlowStart(true),
     safeBaseRTT(-1), measurements(0), minRTT(-1), minCongestedRTT(-1)
 {
-  gettimeofday(&lastUpdate, NULL);
-  gettimeofday(&lastSent, NULL);
+  gettimeofday(&lastUpdate, nullptr);
+  gettimeofday(&lastSent, nullptr);
   memset(&lastPong, 0, sizeof(lastPong));
-  gettimeofday(&lastPongArrival, NULL);
-  gettimeofday(&lastAdjustment, NULL);
+  gettimeofday(&lastPongArrival, nullptr);
+  gettimeofday(&lastAdjustment, nullptr);
 }
 
 Congestion::~Congestion()
@@ -99,9 +100,9 @@ Congestion::~Congestion()
 void Congestion::updatePosition(unsigned pos)
 {
   struct timeval now;
-  unsigned delta, consumed;
+  unsigned idle, delta, consumed;
 
-  gettimeofday(&now, NULL);
+  gettimeofday(&now, nullptr);
 
   delta = pos - lastPosition;
   if ((delta > 0) || (extraBuffer > 0))
@@ -110,18 +111,20 @@ void Congestion::updatePosition(unsigned pos)
   // Idle for too long?
   // We use a very crude RTO calculation in order to keep things simple
   // FIXME: should implement RFC 2861
-  if (msBetween(&lastSent, &now) > __rfbmax(baseRTT*2, 100)) {
+  idle = core::msBetween(&lastSent, &now);
+  if (idle > 100 && idle > baseRTT*2) {
 
 #ifdef CONGESTION_DEBUG
     vlog.debug("Connection idle for %d ms, resetting congestion control",
-               msBetween(&lastSent, &now));
+               idle);
 #endif
 
     // Close congestion window and redo wire latency measurement
-    congWindow = __rfbmin(INITIAL_WINDOW, congWindow);
+    if (congWindow > INITIAL_WINDOW)
+      congWindow = INITIAL_WINDOW;
     baseRTT = -1;
     measurements = 0;
-    gettimeofday(&lastAdjustment, NULL);
+    gettimeofday(&lastAdjustment, nullptr);
     minRTT = minCongestedRTT = -1;
     inSlowStart = true;
   }
@@ -132,7 +135,7 @@ void Congestion::updatePosition(unsigned pos)
   // (we cannot do this until we have a RTT measurement though)
   if (baseRTT != (unsigned)-1) {
     extraBuffer += delta;
-    consumed = msBetween(&lastUpdate, &now) * congWindow / baseRTT;
+    consumed = core::msBetween(&lastUpdate, &now) * congWindow / baseRTT;
     if (extraBuffer < consumed)
       extraBuffer = 0;
     else
@@ -149,7 +152,7 @@ void Congestion::sentPing()
 
   memset(&rttInfo, 0, sizeof(struct RTTInfo));
 
-  gettimeofday(&rttInfo.tv, NULL);
+  gettimeofday(&rttInfo.tv, nullptr);
   rttInfo.pos = lastPosition;
   rttInfo.extra = getExtraBuffer();
   rttInfo.congested = isCongested();
@@ -166,7 +169,7 @@ void Congestion::gotPong()
   if (pings.empty())
     return;
 
-  gettimeofday(&now, NULL);
+  gettimeofday(&now, nullptr);
 
   rttInfo = pings.front();
   pings.pop_front();
@@ -174,7 +177,7 @@ void Congestion::gotPong()
   lastPong = rttInfo;
   lastPongArrival = now;
 
-  rtt = msBetween(&rttInfo.tv, &now);
+  rtt = core::msBetween(&rttInfo.tv, &now);
   if (rtt < 1)
     rtt = 1;
 
@@ -184,7 +187,7 @@ void Congestion::gotPong()
 
   // Pings sent before the last adjustment aren't interesting as they
   // aren't a measurement of the current congestion window
-  if (isBefore(&rttInfo.tv, &lastAdjustment))
+  if (core::isBefore(&rttInfo.tv, &lastAdjustment))
     return;
 
   // Estimate added delay because of overtaxed buffers (see above)
@@ -249,7 +252,7 @@ int Congestion::getUncongestedETA()
 
   prevPing = &lastPong;
   eta = 0;
-  elapsed = msSince(&lastPongArrival);
+  elapsed = core::msSince(&lastPongArrival);
 
   // Walk the ping queue and figure out which one we are waiting for to
   // get to an uncongested state
@@ -268,7 +271,7 @@ int Congestion::getUncongestedETA()
       curPing = *iter;
     }
 
-    etaNext = msBetween(&prevPing->tv, &curPing.tv);
+    etaNext = core::msBetween(&prevPing->tv, &curPing.tv);
     // Compensate for buffering delays
     delay = curPing.extra * baseRTT / congWindow;
     etaNext += delay;
@@ -320,7 +323,7 @@ void Congestion::debugTrace(const char* filename, int fd)
 #ifdef __linux__
   FILE *f;
   f = fopen(filename, "ab");
-  if (f != NULL) {
+  if (f != nullptr) {
     struct tcp_info info;
     int buffered;
     socklen_t len;
@@ -329,7 +332,7 @@ void Congestion::debugTrace(const char* filename, int fd)
                     TCP_INFO, &info, &len) == 0) &&
         (ioctl(fd, SIOCOUTQ, &buffered) == 0)) {
       struct timeval now;
-      gettimeofday(&now, NULL);
+      gettimeofday(&now, nullptr);
       fprintf(f, "%u.%06u,%u,%u,%u,%u\n",
               (unsigned)now.tv_sec, (unsigned)now.tv_usec,
               congWindow, info.tcpi_snd_cwnd * info.tcpi_snd_mss,
@@ -349,7 +352,7 @@ unsigned Congestion::getExtraBuffer()
   if (baseRTT == (unsigned)-1)
     return 0;
 
-  elapsed = msSince(&lastUpdate);
+  elapsed = core::msSince(&lastUpdate);
   consumed = elapsed * congWindow / baseRTT;
 
   if (consumed >= extraBuffer)
@@ -389,7 +392,7 @@ unsigned Congestion::getInFlight()
   // completely. Look at the next ping that should arrive and figure
   // out how far behind it should be and interpolate the positions.
 
-  etaNext = msBetween(&lastPong.tv, &nextPong.tv);
+  etaNext = core::msBetween(&lastPong.tv, &nextPong.tv);
   // Compensate for buffering delays
   delay = nextPong.extra * baseRTT / congWindow;
   etaNext += delay;
@@ -399,7 +402,7 @@ unsigned Congestion::getInFlight()
   else
     etaNext -= delay;
 
-  elapsed = msSince(&lastPongArrival);
+  elapsed = core::msSince(&lastPongArrival);
 
   // The pong should be here any second. Be optimistic and assume
   // we can already use its value.
@@ -430,7 +433,7 @@ void Congestion::updateCongestion()
 
   diff = minRTT - baseRTT;
 
-  if (diff > __rfbmax(100, baseRTT/2)) {
+  if (diff > 100 && diff > baseRTT/2) {
     // We have no way of detecting loss, so assume massive latency
     // spike means packet loss. Adjust the window and go directly
     // to congestion avoidance.
@@ -494,7 +497,7 @@ void Congestion::updateCongestion()
 #endif
 
   measurements = 0;
-  gettimeofday(&lastAdjustment, NULL);
+  gettimeofday(&lastAdjustment, nullptr);
   minRTT = minCongestedRTT = -1;
 }
 

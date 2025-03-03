@@ -35,9 +35,8 @@
 #include <sys/stat.h>
 
 #ifdef WIN32
-#include <os/winerrno.h>
+#include <core/winerrno.h>
 #include <direct.h>
-#define mkdir(path, mode) _mkdir(path)
 #endif
 
 #ifdef __APPLE__
@@ -49,16 +48,18 @@
 #include <X11/XKBlib.h>
 #endif
 
-#include <rfb/Logger_stdio.h>
+#include <core/Exception.h>
+#include <core/Logger_stdio.h>
+#include <core/LogWriter.h>
+#include <core/Timer.h>
+
 #ifdef HAVE_GNUTLS
 #include <rfb/CSecurityTLS.h>
 #endif
-#include <rfb/LogWriter.h>
-#include <rfb/Timer.h>
-#include <rfb/Exception.h>
-#include <rdr/Exception.h>
+
+#include <core/xdgdirs.h>
+
 #include <network/TcpSocket.h>
-#include <os/os.h>
 
 #include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_Sys_Menu_Bar.H>
@@ -80,19 +81,15 @@
 #include "win32.h"
 #endif
 
-static rfb::LogWriter vlog("main");
-
-using namespace network;
-using namespace rfb;
-using namespace std;
+static core::LogWriter vlog("main");
 
 char vncServerName[VNCSERVERNAMELEN] = { '\0' };
 
-static const char *argv0 = NULL;
+static const char *argv0 = nullptr;
 
 static bool inMainloop = false;
 static bool exitMainloop = false;
-static char *exitError = NULL;
+static char *exitError = nullptr;
 static bool fatalError = false;
 
 static const char *about_text()
@@ -103,11 +100,11 @@ static const char *about_text()
   // encodings, so we need to make sure we get a fresh string every
   // time.
   snprintf(buffer, sizeof(buffer),
-           _("TigerVNC Viewer v%s\n"
+           _("TigerVNC viewer v%s\n"
              "Built on: %s\n"
-             "Copyright (C) 1999-%d TigerVNC Team and many others (see README.rst)\n"
+             "Copyright (C) 1999-%d TigerVNC team and many others (see README.rst)\n"
              "See https://www.tigervnc.org for information on TigerVNC."),
-           PACKAGE_VERSION, BUILD_TIMESTAMP, 2022);
+           PACKAGE_VERSION, BUILD_TIMESTAMP, 2025);
 
   return buffer;
 }
@@ -119,7 +116,7 @@ void abort_vncviewer(const char *error, ...)
 
   // Prioritise the first error we get as that is probably the most
   // relevant one.
-  if (exitError == NULL) {
+  if (exitError == nullptr) {
     va_list ap;
 
     va_start(ap, error);
@@ -132,7 +129,7 @@ void abort_vncviewer(const char *error, ...)
     exitMainloop = true;
   else {
     // We're early in the startup. Assume we can just exit().
-    if (alertOnFatalError && (exitError != NULL))
+    if (alertOnFatalError && (exitError != nullptr))
       fl_alert("%s", exitError);
     exit(EXIT_FAILURE);
   }
@@ -144,7 +141,7 @@ void abort_connection(const char *error, ...)
 
   // Prioritise the first error we get as that is probably the most
   // relevant one.
-  if (exitError == NULL) {
+  if (exitError == nullptr) {
     va_list ap;
 
     va_start(ap, error);
@@ -156,9 +153,9 @@ void abort_connection(const char *error, ...)
   exitMainloop = true;
 }
 
-void abort_connection_with_unexpected_error(const rdr::Exception &e) {
+void abort_connection_with_unexpected_error(const std::exception &e) {
   abort_connection(_("An unexpected error occurred when communicating "
-                     "with the server:\n\n%s"), e.str());
+                     "with the server:\n\n%s"), e.what());
 }
 
 void disconnect()
@@ -189,8 +186,8 @@ static void mainloop(const char* vncserver, network::Socket* sock)
     while (!exitMainloop) {
       int next_timer;
 
-      next_timer = Timer::checkTimeouts();
-      if (next_timer == 0)
+      next_timer = core::Timer::checkTimeouts();
+      if (next_timer < 0)
         next_timer = INT_MAX;
 
       if (Fl::wait((double)next_timer / 1000.0) < 0.0) {
@@ -202,22 +199,22 @@ static void mainloop(const char* vncserver, network::Socket* sock)
     delete cc;
 
     if (fatalError) {
-      assert(exitError != NULL);
+      assert(exitError != nullptr);
       if (alertOnFatalError)
         fl_alert("%s", exitError);
       break;
     }
 
-    if (exitError == NULL)
+    if (exitError == nullptr)
       break;
 
-    if(reconnectOnError && (sock == NULL)) {
+    if(reconnectOnError && (sock == nullptr)) {
       int ret;
       ret = fl_choice(_("%s\n\n"
                         "Attempt to reconnect?"),
-                      NULL, fl_yes, fl_no, exitError);
+                      nullptr, fl_yes, fl_no, exitError);
       free(exitError);
-      exitError = NULL;
+      exitError = nullptr;
       if (ret == 1)
         continue;
       else
@@ -252,7 +249,7 @@ static void new_connection_cb(Fl_Widget* /*widget*/, void* /*data*/)
     return;
 
   argv[0] = argv0;
-  argv[1] = NULL;
+  argv[1] = nullptr;
 
   execvp(argv[0], (char * const *)argv);
 
@@ -265,7 +262,7 @@ static void CleanupSignalHandler(int sig)
 {
   // CleanupSignalHandler allows C++ object cleanup to happen because it calls
   // exit() rather than the default which is to abort.
-  vlog.info(_("Termination signal %d has been received. TigerVNC Viewer will now exit."), sig);
+  vlog.info(_("Termination signal %d has been received. TigerVNC viewer will now exit."), sig);
   exit(1);
 }
 
@@ -275,16 +272,16 @@ static const char* getlocaledir()
   static char localebuf[PATH_MAX];
   char *slash;
 
-  GetModuleFileName(NULL, localebuf, sizeof(localebuf));
+  GetModuleFileName(nullptr, localebuf, sizeof(localebuf));
 
   slash = strrchr(localebuf, '\\');
-  if (slash == NULL)
-    return NULL;
+  if (slash == nullptr)
+    return nullptr;
 
   *slash = '\0';
 
   if ((strlen(localebuf) + strlen("\\locale")) >= sizeof(localebuf))
-    return NULL;
+    return nullptr;
 
   strcat(localebuf, "\\locale");
 
@@ -298,13 +295,13 @@ static const char* getlocaledir()
   static char localebuf[PATH_MAX];
 
   bundle = CFBundleGetMainBundle();
-  if (bundle == NULL)
-    return NULL;
+  if (bundle == nullptr)
+    return nullptr;
 
   localeurl = CFBundleCopyResourceURL(bundle, CFSTR("locale"),
-                                      NULL, NULL);
-  if (localeurl == NULL)
-    return NULL;
+                                      nullptr, nullptr);
+  if (localeurl == nullptr)
+    return nullptr;
 
   localestr = CFURLCopyFileSystemPath(localeurl, kCFURLPOSIXPathStyle);
 
@@ -313,7 +310,7 @@ static const char* getlocaledir()
   ret = CFStringGetCString(localestr, localebuf, sizeof(localebuf),
                            kCFStringEncodingUTF8);
   if (!ret)
-    return NULL;
+    return nullptr;
 
   return localebuf;
 #else
@@ -333,11 +330,13 @@ static void init_fltk()
 #ifdef WIN32
   HICON lg, sm;
 
-  lg = (HICON)LoadImage(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_ICON),
+  lg = (HICON)LoadImage(GetModuleHandle(nullptr),
+                        MAKEINTRESOURCE(IDI_ICON),
                         IMAGE_ICON, GetSystemMetrics(SM_CXICON),
                         GetSystemMetrics(SM_CYICON),
                         LR_DEFAULTCOLOR | LR_SHARED);
-  sm = (HICON)LoadImage(GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_ICON),
+  sm = (HICON)LoadImage(GetModuleHandle(nullptr),
+                        MAKEINTRESOURCE(IDI_ICON),
                         IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
                         GetSystemMetrics(SM_CYSMICON),
                         LR_DEFAULTCOLOR | LR_SHARED);
@@ -352,12 +351,12 @@ static void init_fltk()
   count = 0;
 
   // FIXME: Follow icon theme specification
-  for (size_t i = 0;i < sizeof(icon_sizes)/sizeof(icon_sizes[0]);i++) {
+  for (int icon_size : icon_sizes) {
       char icon_path[PATH_MAX];
       bool exists;
 
       sprintf(icon_path, "%s/icons/hicolor/%dx%d/apps/tigervnc.png",
-              CMAKE_INSTALL_FULL_DATADIR, icon_sizes[i], icon_sizes[i]);
+              CMAKE_INSTALL_FULL_DATADIR, icon_size, icon_size);
 
       struct stat st;
       if (stat(icon_path, &st) != 0)
@@ -388,7 +387,7 @@ static void init_fltk()
   fl_message_hotspot(false);
 
   // Avoid empty titles for popups
-  fl_message_title_default(_("TigerVNC Viewer"));
+  fl_message_title_default(_("TigerVNC viewer"));
 
   // FLTK exposes these so that we can translate them.
   fl_no     = _("No");
@@ -411,10 +410,10 @@ static void init_fltk()
 
   Fl_Mac_App_Menu::print = ""; // Don't want the print item
   Fl_Mac_App_Menu::services = _("Services");
-  Fl_Mac_App_Menu::hide_others = _("Hide Others");
-  Fl_Mac_App_Menu::show = _("Show All");
+  Fl_Mac_App_Menu::hide_others = _("Hide others");
+  Fl_Mac_App_Menu::show = _("Show all");
 
-  fl_mac_set_about(about_callback, NULL);
+  fl_mac_set_about(about_callback, nullptr);
 
   Fl_Sys_Menu_Bar *menubar;
   char buffer[1024];
@@ -423,31 +422,18 @@ static void init_fltk()
   // which means we cannot use our generic Fl_Menu_ helpers.
   if (fltk_menu_escape(p_("SysMenu|", "&File"),
                        buffer, sizeof(buffer)) < sizeof(buffer))
-      menubar->add(buffer, 0, 0, 0, FL_SUBMENU);
+      menubar->add(buffer, 0, nullptr, nullptr, FL_SUBMENU);
   if (fltk_menu_escape(p_("SysMenu|File|", "&New Connection"),
                        buffer, sizeof(buffer)) < sizeof(buffer))
       menubar->insert(1, buffer, FL_COMMAND | 'n', new_connection_cb);
 #endif
 }
 
-static void mkvnchomedir()
-{
-  // Create .vnc in the user's home directory if it doesn't already exist
-  const char* homeDir = os::getvnchomedir();
-  if (homeDir == NULL) {
-    vlog.error(_("Could not obtain the home directory path"));
-  } else {
-    int result = mkdir(homeDir, 0755);
-    if (result == -1 && errno != EEXIST)
-      vlog.error(_("Could not create VNC home directory: %s"), strerror(errno));
-  }
-}
-
 static void usage(const char *programName)
 {
 #ifdef WIN32
   // If we don't have a console then we need to create one for output
-  if (GetConsoleWindow() == NULL) {
+  if (GetConsoleWindow() == nullptr) {
     HANDLE handle;
     int fd;
 
@@ -459,15 +445,15 @@ static void usage(const char *programName)
   }
 #endif
 
-  fprintf(stderr,
+  fprintf(stderr, _(
           "\n"
-          "usage: %s [parameters] [host][:displayNum]\n"
+          "Usage: %s [parameters] [host][:displayNum]\n"
           "       %s [parameters] [host][::port]\n"
 #ifndef WIN32
           "       %s [parameters] [unix socket]\n"
 #endif
           "       %s [parameters] -listen [port]\n"
-          "       %s [parameters] [.tigervnc file]\n",
+          "       %s [parameters] [.tigervnc file]\n"),
           programName, programName,
 #ifndef WIN32
           programName,
@@ -475,21 +461,21 @@ static void usage(const char *programName)
           programName, programName);
 
 #if !defined(WIN32) && !defined(__APPLE__)
-  fprintf(stderr,"\n"
+  fprintf(stderr, _("\n"
           "Options:\n\n"
           "  -display Xdisplay  - Specifies the X display for the viewer window\n"
           "  -geometry geometry - Initial position of the main VNC viewer window. See the\n"
-          "                       man page for details.\n");
+          "                       man page for details.\n"));
 #endif
 
-  fprintf(stderr,"\n"
+  fprintf(stderr, _("\n"
           "Parameters can be turned on with -<param> or off with -<param>=0\n"
           "Parameters which take a value can be specified as "
           "-<param> <value>\n"
           "Other valid forms are <param>=<value> -<param>=<value> "
           "--<param>=<value>\n"
-          "Parameter names are case-insensitive.  The parameters are:\n\n");
-  Configuration::listParams(79, 14);
+          "Parameter names are case-insensitive.  The parameters are:\n\n"));
+  core::Configuration::listParams(79, 14);
 
 #ifdef WIN32
   // Just wait for the user to kill the console window
@@ -500,17 +486,17 @@ static void usage(const char *programName)
 }
 
 static void
-potentiallyLoadConfigurationFile(char *vncServerName)
+potentiallyLoadConfigurationFile(const char *filename)
 {
-  const bool hasPathSeparator = (strchr(vncServerName, '/') != NULL ||
-                                 (strchr(vncServerName, '\\')) != NULL);
+  const bool hasPathSeparator = (strchr(filename, '/') != nullptr ||
+                                 (strchr(filename, '\\')) != nullptr);
 
   if (hasPathSeparator) {
 #ifndef WIN32
     struct stat sb;
 
     // This might be a UNIX socket, we need to check
-    if (stat(vncServerName, &sb) == -1) {
+    if (stat(filename, &sb) == -1) {
       // Some access problem; let loadViewerParameters() deal with it...
     } else {
       if ((sb.st_mode & S_IFMT) == S_IFSOCK)
@@ -520,15 +506,15 @@ potentiallyLoadConfigurationFile(char *vncServerName)
 
     try {
       const char* newServerName;
-      newServerName = loadViewerParameters(vncServerName);
+      newServerName = loadViewerParameters(filename);
       // This might be empty, but we still need to clear it so we
       // don't try to connect to the filename
       strncpy(vncServerName, newServerName, VNCSERVERNAMELEN-1);
       vncServerName[VNCSERVERNAMELEN-1] = '\0';
-    } catch (rfb::Exception& e) {
-      vlog.error("%s", e.str());
+    } catch (std::exception& e) {
+      vlog.error("%s", e.what());
       abort_vncviewer(_("Unable to load the specified configuration "
-                        "file:\n\n%s"), e.str());
+                        "file:\n\n%s"), e.what());
     }
   }
 }
@@ -541,43 +527,67 @@ migrateDeprecatedOptions()
 
     fullScreenMode.setParam("all");
   }
+  if (dotWhenNoCursor) {
+    vlog.info(_("DotWhenNoCursor is deprecated, set AlwaysCursor to 1 and CursorType to 'Dot' instead"));
+
+    alwaysCursor.setParam(true);
+    cursorType.setParam("Dot");
+  }
+}
+
+static void
+create_base_dirs()
+{
+  const char *dir;
+
+  dir = core::getvncconfigdir();
+  if (dir == nullptr) {
+    vlog.error(_("Could not determine VNC config directory path"));
+    return;
+  }
+
+#ifndef WIN32
+  const char *dotdir = strrchr(dir, '.');
+  if (dotdir != nullptr && strcmp(dotdir, ".vnc") == 0)
+    vlog.info(_("~/.vnc is deprecated, please consult 'man vncviewer' for paths to migrate to."));
+#else
+  const char *vncdir = strrchr(dir, '\\');
+  if (vncdir != nullptr && strcmp(vncdir, "vnc") == 0)
+    vlog.info(_("%%APPDATA%%\\vnc is deprecated, please switch to the %%APPDATA%%\\TigerVNC location."));
+#endif
+
+  if (core::mkdir_p(dir, 0755) == -1) {
+    if (errno != EEXIST)
+      vlog.error(_("Could not create VNC config directory \"%s\": %s"),
+                 dir, strerror(errno));
+  }
+
+  dir = core::getvncdatadir();
+  if (dir == nullptr) {
+    vlog.error(_("Could not determine VNC data directory path"));
+    return;
+  }
+
+  if (core::mkdir_p(dir, 0755) == -1) {
+    if (errno != EEXIST)
+      vlog.error(_("Could not create VNC data directory \"%s\": %s"),
+                 dir, strerror(errno));
+  }
+
+  dir = core::getvncstatedir();
+  if (dir == nullptr) {
+    vlog.error(_("Could not determine VNC state directory path"));
+    return;
+  }
+
+  if (core::mkdir_p(dir, 0755) == -1) {
+    if (errno != EEXIST)
+      vlog.error(_("Could not create VNC state directory \"%s\": %s"),
+                 dir, strerror(errno));
+  }
 }
 
 #ifndef WIN32
-static int
-interpretViaParam(char *remoteHost, int *remotePort, int localPort)
-{
-  const int SERVER_PORT_OFFSET = 5900;
-  char *pos = strchr(vncServerName, ':');
-  if (pos == NULL)
-    *remotePort = SERVER_PORT_OFFSET;
-  else {
-    int portOffset = SERVER_PORT_OFFSET;
-    size_t len;
-    *pos++ = '\0';
-    len = strlen(pos);
-    if (*pos == ':') {
-      /* Two colons is an absolute port number, not an offset. */
-      pos++;
-      len--;
-      portOffset = 0;
-    }
-    if (!len || strspn (pos, "-0123456789") != len )
-      return 1;
-    *remotePort = atoi(pos) + portOffset;
-  }
-
-  if (*vncServerName != '\0')
-    strcpy(remoteHost, vncServerName);
-  else
-    strcpy(remoteHost, "localhost");
-
-  snprintf(vncServerName, VNCSERVERNAMELEN, "localhost::%d", localPort);
-  vncServerName[VNCSERVERNAMELEN - 1] = '\0';
-
-  return 0;
-}
-
 static void
 createTunnel(const char *gatewayHost, const char *remoteHost,
              int remotePort, int localPort)
@@ -595,39 +605,37 @@ createTunnel(const char *gatewayHost, const char *remoteHost,
     cmd = "/usr/bin/ssh -f -L \"$L\":\"$H\":\"$R\" \"$G\" sleep 20";
   /* Compatibility with TigerVNC's method. */
   cmd2 = strdup(cmd);
-  while ((percent = strchr(cmd2, '%')) != NULL)
+  while ((percent = strchr(cmd2, '%')) != nullptr)
     *percent = '$';
   system(cmd2);
   free(cmd2);
 }
 
-static int mktunnel()
+static void mktunnel()
 {
   const char *gatewayHost;
-  char remoteHost[VNCSERVERNAMELEN];
-  int localPort = findFreeTcpPort();
+  std::string remoteHost;
+  int localPort = network::findFreeTcpPort();
   int remotePort;
 
-  if (interpretViaParam(remoteHost, &remotePort, localPort) != 0)
-    return 1;
+  network::getHostAndPort(vncServerName, &remoteHost, &remotePort);
+  snprintf(vncServerName, VNCSERVERNAMELEN, "localhost::%d", localPort);
+  vncServerName[VNCSERVERNAMELEN - 1] = '\0';
   gatewayHost = (const char*)via;
-  createTunnel(gatewayHost, remoteHost, remotePort, localPort);
-
-  return 0;
+  createTunnel(gatewayHost, remoteHost.c_str(), remotePort, localPort);
 }
 #endif /* !WIN32 */
 
 int main(int argc, char** argv)
 {
   const char *localedir;
-  UserDialog dlg;
 
   argv0 = argv[0];
 
   setlocale(LC_ALL, "");
 
   localedir = getlocaledir();
-  if (localedir == NULL)
+  if (localedir == nullptr)
     fprintf(stderr, "Failed to determine locale directory\n");
   else
     bindtextdomain(PACKAGE_NAME, localedir);
@@ -642,13 +650,13 @@ int main(int argc, char** argv)
   bind_textdomain_codeset(PACKAGE_NAME, "UTF-8");
   bind_textdomain_codeset("libc", "UTF-8");
 
-  rfb::initStdIOLoggers();
+  core::initStdIOLoggers();
 #ifdef WIN32
-  rfb::initFileLogger("C:\\temp\\vncviewer.log");
+  core::initFileLogger("C:\\temp\\vncviewer.log");
 #else
-  rfb::initFileLogger("/tmp/vncviewer.log");
+  core::initFileLogger("/tmp/vncviewer.log");
 #endif
-  rfb::LogWriter::setLogParams("*:stderr:30");
+  core::LogWriter::setLogParams("*:stderr:30");
 
 #ifdef SIGHUP
   signal(SIGHUP, CleanupSignalHandler);
@@ -656,56 +664,54 @@ int main(int argc, char** argv)
   signal(SIGINT, CleanupSignalHandler);
   signal(SIGTERM, CleanupSignalHandler);
 
-  Configuration::enableViewerParams();
-
   /* Load the default parameter settings */
   char defaultServerName[VNCSERVERNAMELEN] = "";
   try {
     const char* configServerName;
-    configServerName = loadViewerParameters(NULL);
-    if (configServerName != NULL) {
+    configServerName = loadViewerParameters(nullptr);
+    if (configServerName != nullptr) {
       strncpy(defaultServerName, configServerName, VNCSERVERNAMELEN-1);
       defaultServerName[VNCSERVERNAMELEN-1] = '\0';
     }
-  } catch (rfb::Exception& e) {
-    vlog.error("%s", e.str());
+  } catch (std::exception& e) {
+    vlog.error("%s", e.what());
   }
 
   for (int i = 1; i < argc;) {
-    /* We need to resolve an ambiguity for booleans */
-    if (argv[i][0] == '-' && i+1 < argc) {
-        VoidParameter *param;
+    int ret;
 
-        param = Configuration::getParam(&argv[i][1]);
-        if ((param != NULL) &&
-            (dynamic_cast<BoolParameter*>(param) != NULL)) {
-          if ((strcasecmp(argv[i+1], "0") == 0) ||
-              (strcasecmp(argv[i+1], "1") == 0) ||
-              (strcasecmp(argv[i+1], "true") == 0) ||
-              (strcasecmp(argv[i+1], "false") == 0) ||
-              (strcasecmp(argv[i+1], "yes") == 0) ||
-              (strcasecmp(argv[i+1], "no") == 0)) {
-              param->setParam(argv[i+1]);
-              i += 2;
-              continue;
-          }
-      }
-    }
-
-    if (Configuration::setParam(argv[i])) {
-      i++;
+    ret = core::Configuration::handleParamArg(argc, argv, i);
+    if (ret > 0) {
+      i += ret;
       continue;
     }
 
-    if (argv[i][0] == '-') {
-      if (i+1 < argc) {
-        if (Configuration::setParam(&argv[i][1], argv[i+1])) {
-          i += 2;
-          continue;
-        }
-      }
-
+    if (strcmp(argv[i], "-h") == 0 ||
+        strcmp(argv[i], "--help") == 0) {
       usage(argv[0]);
+    }
+
+    if (strcmp(argv[i], "-v") == 0 ||
+        strcmp(argv[i], "--version") == 0) {
+      /* We already print version on every start */
+      return 0;
+    }
+
+    if (argv[i][0] == '-') {
+      fprintf(stderr, "\n");
+      fprintf(stderr, _("%s: Unrecognized option '%s'\n"),
+              argv[0], argv[i]);
+      fprintf(stderr, _("See '%s --help' for more information.\n"),
+              argv[0]);
+      exit(1);
+    }
+
+    if (vncServerName[0] != '\0') {
+      fprintf(stderr, "\n");
+      fprintf(stderr, _("%s: Extra argument '%s'\n"), argv[0], argv[i]);
+      fprintf(stderr, _("See '%s --help' for more information.\n"),
+              argv[0]);
+      exit(0);
     }
 
     strncpy(vncServerName, argv[i], VNCSERVERNAMELEN);
@@ -718,7 +724,7 @@ int main(int argc, char** argv)
     Fl::display(display);
   }
   fl_open_display();
-  XkbSetDetectableAutoRepeat(fl_display, True, NULL);
+  XkbSetDetectableAutoRepeat(fl_display, True, nullptr);
 #endif
 
   init_fltk();
@@ -729,14 +735,9 @@ int main(int argc, char** argv)
 
   migrateDeprecatedOptions();
 
-  mkvnchomedir();
+  create_base_dirs();
 
-  CSecurity::upg = &dlg;
-#if defined(HAVE_GNUTLS) || defined(HAVE_NETTLE)
-  CSecurity::msg = &dlg;
-#endif
-
-  Socket *sock = NULL;
+  network::Socket* sock = nullptr;
 
 #ifndef WIN32
   /* Specifying -via and -listen together is nonsense */
@@ -750,48 +751,46 @@ int main(int argc, char** argv)
 #endif
 
   if (listenMode) {
-    std::list<SocketListener*> listeners;
+    std::list<network::SocketListener*> listeners;
     try {
       int port = 5500;
       if (isdigit(vncServerName[0]))
         port = atoi(vncServerName);
 
-      createTcpListeners(&listeners, 0, port);
+      createTcpListeners(&listeners, nullptr, port);
+      if (listeners.empty())
+        throw std::runtime_error(_("Unable to listen for incoming connections"));
 
       vlog.info(_("Listening on port %d"), port);
 
       /* Wait for a connection */
-      while (sock == NULL) {
+      while (sock == nullptr) {
         fd_set rfds;
         FD_ZERO(&rfds);
-        for (std::list<SocketListener*>::iterator i = listeners.begin();
-             i != listeners.end();
-             i++)
-          FD_SET((*i)->getFd(), &rfds);
+        for (network::SocketListener* listener : listeners)
+          FD_SET(listener->getFd(), &rfds);
 
-        int n = select(FD_SETSIZE, &rfds, 0, 0, 0);
+        int n = select(FD_SETSIZE, &rfds, nullptr, nullptr, nullptr);
         if (n < 0) {
           if (errno == EINTR) {
             vlog.debug("Interrupted select() system call");
             continue;
           } else {
-            throw rdr::SystemException("select", errno);
+            throw core::socket_error("select", errno);
           }
         }
 
-        for (std::list<SocketListener*>::iterator i = listeners.begin ();
-             i != listeners.end();
-             i++)
-          if (FD_ISSET((*i)->getFd(), &rfds)) {
-            sock = (*i)->accept();
+        for (network::SocketListener* listener : listeners)
+          if (FD_ISSET(listener->getFd(), &rfds)) {
+            sock = listener->accept();
             if (sock)
               /* Got a connection */
               break;
           }
       }
-    } catch (rdr::Exception& e) {
-      vlog.error("%s", e.str());
-      abort_vncviewer(_("Failure waiting for incoming VNC connection:\n\n%s"), e.str());
+    } catch (std::exception& e) {
+      vlog.error("%s", e.what());
+      abort_vncviewer(_("Failure waiting for incoming VNC connection:\n\n%s"), e.what());
       return 1; /* Not reached */
     }
 
@@ -807,8 +806,14 @@ int main(int argc, char** argv)
     }
 
 #ifndef WIN32
-    if (strlen(via) > 0 && mktunnel() != 0)
-      usage(argv[0]);
+    if (strlen(via) > 0) {
+      try {
+        mktunnel();
+      } catch (std::exception& e) {
+        vlog.error("%s", e.what());
+        abort_vncviewer(_("Failure setting up encrypted tunnel:\n\n%s"), e.what());
+      }
+    }
 #endif
   }
 

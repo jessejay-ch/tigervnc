@@ -23,11 +23,11 @@
 #include <set>
 #include <map>
 
-#include <rfb/Timer.h>
+#include <core/Timer.h>
 
 #include "GestureEvent.h"
 
-class GestureHandler : public rfb::Timer::Callback {
+class GestureHandler : public core::Timer::Callback {
   public:
     GestureHandler();
     virtual ~GestureHandler();
@@ -42,12 +42,12 @@ class GestureHandler : public rfb::Timer::Callback {
   private:
     bool hasDetectedGesture();
 
-    virtual bool handleTimeout(rfb::Timer* t);
+    void handleTimeout(core::Timer* t) override;
     void longpressTimeout();
     void twoTouchTimeout();
 
     void pushEvent(GestureEventType t);
-    GestureEventGesture stateToGesture(unsigned char state);
+    static GestureEventGesture stateToGesture(unsigned char state);
 
     void getPosition(double *firstX, double *firstY,
                      double *lastX, double *lastY);
@@ -74,8 +74,8 @@ class GestureHandler : public rfb::Timer::Callback {
     bool waitingRelease;
     struct timeval releaseStart;
 
-    rfb::Timer longpressTimer;
-    rfb::Timer twoTouchTimer;
+    core::Timer longpressTimer;
+    core::Timer twoTouchTimer;
 };
 
 #endif // __GESTUREHANDLER_H__

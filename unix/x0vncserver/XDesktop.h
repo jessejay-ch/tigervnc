@@ -32,43 +32,56 @@
 
 #include <vncconfig/QueryConnectDialog.h>
 
+#include "XSelection.h"
+
 class Geometry;
 class XPixelBuffer;
+
+struct AddedKeySym
+{
+  KeySym keysym;
+  KeyCode keycode;
+};
 
 // number of XKb indicator leds to handle
 #define XDESKTOP_N_LEDS 3
 
 class XDesktop : public rfb::SDesktop,
                  public TXGlobalEventHandler,
-                 public QueryResultCallback
+                 public QueryResultCallback,
+                 public XSelectionHandler
 {
 public:
   XDesktop(Display* dpy_, Geometry *geometry);
   virtual ~XDesktop();
   void poll();
   // -=- SDesktop interface
-  virtual void start(rfb::VNCServer* vs);
-  virtual void stop();
-  virtual void terminate();
+  void init(rfb::VNCServer* vs) override;
+  void start() override;
+  void stop() override;
+  void terminate() override;
   bool isRunning();
-  virtual void queryConnection(network::Socket* sock,
-                               const char* userName);
-  virtual void pointerEvent(const rfb::Point& pos, int buttonMask);
-  KeyCode XkbKeysymToKeycode(Display* dpy, KeySym keysym);
-  KeyCode addKeysym(Display* dpy, KeySym keysym);
-  void deleteAddedKeysyms(Display* dpy);
-  KeyCode keysymToKeycode(Display* dpy, KeySym keysym);
-  virtual void keyEvent(uint32_t keysym, uint32_t xtcode, bool down);
-  virtual void clientCutText(const char* str);
-  virtual unsigned int setScreenLayout(int fb_width, int fb_height,
-                                       const rfb::ScreenSet& layout);
+  void queryConnection(network::Socket* sock,
+                       const char* userName) override;
+  void pointerEvent(const core::Point& pos,
+                    uint16_t buttonMask) override;
+  void keyEvent(uint32_t keysym, uint32_t xtcode, bool down) override;
+  unsigned int setScreenLayout(int fb_width, int fb_height,
+                               const rfb::ScreenSet& layout) override;
+  void handleClipboardRequest() override;
+  void handleClipboardAnnounce(bool available) override;
+  void handleClipboardData(const char* data) override;
+
+  // -=- XSelectionHandler interface
+  void handleXSelectionAnnounce(bool available) override;
+  void handleXSelectionData(const char* data) override;
 
   // -=- TXGlobalEventHandler interface
-  virtual bool handleGlobalEvent(XEvent* ev);
+  bool handleGlobalEvent(XEvent* ev) override;
 
   // -=- QueryResultCallback interface
-  virtual void queryApproved();
-  virtual void queryRejected();
+  void queryApproved() override;
+  void queryRejected() override;
 
 protected:
   Display* dpy;
@@ -77,11 +90,12 @@ protected:
   rfb::VNCServer* server;
   QueryConnectDialog* queryConnectDialog;
   network::Socket* queryConnectSock;
-  int oldButtonMask;
+  XSelection selection;
+  uint16_t oldButtonMask;
   bool haveXtest;
   bool haveDamage;
   int maxButtons;
-  std::map<KeySym, KeyCode> addedKeysyms;
+  std::list<AddedKeySym> addedKeysyms;
   std::map<KeySym, KeyCode> pressedKeys;
   bool running;
 #ifdef HAVE_XDAMAGE
@@ -101,7 +115,18 @@ protected:
   unsigned ledState;
   const unsigned short *codeMap;
   unsigned codeMapLen;
+
+protected:
+#ifdef HAVE_XTEST
+  KeyCode XkbKeysymToKeycode(KeySym keysym);
+  KeyCode getReusableKeycode(XkbDescPtr xkb);
+  KeyCode addKeysym(KeySym keysym);
+  void deleteAddedKeysyms();
+  KeyCode keysymToKeycode(KeySym keysym);
+#endif
+#ifdef HAVE_XFIXES
   bool setCursor();
+#endif
   rfb::ScreenSet computeScreenLayout();
 };
 

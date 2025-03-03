@@ -45,10 +45,9 @@ public:
   int value(std::set<int> indices);
 
 protected:
-  virtual void draw();
+  void draw() override;
 
 private:
-  const Fl_Color SELECTION_COLOR;
   const Fl_Color AVAILABLE_COLOR;
   typedef std::map<int, Fl_Button *> MonitorMap;
   MonitorMap monitors;

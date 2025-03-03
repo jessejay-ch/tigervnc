@@ -23,14 +23,14 @@
 
 #include <stdio.h>
 
-#include <rfb/Exception.h>
-#include <rfb/LogWriter.h>
+#include <core/LogWriter.h>
+#include <core/string.h>
+
 #include <rfb/CMsgHandler.h>
 #include <rfb/clipboardTypes.h>
 #include <rfb/screenTypes.h>
-#include <rfb/util.h>
 
-static rfb::LogWriter vlog("CMsgHandler");
+static core::LogWriter vlog("CMsgHandler");
 
 using namespace rfb;
 
@@ -59,18 +59,13 @@ void CMsgHandler::setExtendedDesktopSize(unsigned reason, unsigned result,
   server.setDimensions(width, height, layout);
 }
 
-void CMsgHandler::setPixelFormat(const PixelFormat& pf)
-{
-  server.setPF(pf);
-}
-
 void CMsgHandler::setName(const char* name)
 {
   server.setName(name);
 }
 
 void CMsgHandler::fence(uint32_t /*flags*/, unsigned /*len*/,
-                        const char /*data*/ [])
+                        const uint8_t /*data*/ [])
 {
   server.supportsFence = true;
 }
@@ -78,6 +73,11 @@ void CMsgHandler::fence(uint32_t /*flags*/, unsigned /*len*/,
 void CMsgHandler::endOfContinuousUpdates()
 {
   server.supportsContinuousUpdates = true;
+}
+
+void CMsgHandler::supportsExtendedMouseButtons()
+{
+  server.supportsExtendedMouseButtons = true;
 }
 
 void CMsgHandler::supportsQEMUKeyEvent()
@@ -141,7 +141,7 @@ void CMsgHandler::handleClipboardCaps(uint32_t flags, const uint32_t* lengths)
         vlog.debug("    %s (only notify)", type);
       else {
         vlog.debug("    %s (automatically send up to %s)",
-                   type, iecPrefix(lengths[i], "B").c_str());
+                   type, core::iecPrefix(lengths[i], "B").c_str());
       }
     }
   }

@@ -23,7 +23,6 @@
 
 #include <rfb/CConnection.h>
 #include <rfb/CSecurityPlain.h>
-#include <rfb/UserPasswdGetter.h>
 
 #include <rdr/OutStream.h>
 
@@ -36,13 +35,13 @@ bool CSecurityPlain::processMsg()
   std::string username;
   std::string password;
 
-  (CSecurity::upg)->getUserPasswd(cc->isSecure(), &username, &password);
+  cc->getUserPasswd(cc->isSecure(), &username, &password);
 
   // Return the response to the server
   os->writeU32(username.size());
   os->writeU32(password.size());
-  os->writeBytes(username.data(), username.size());
-  os->writeBytes(password.data(), password.size());
+  os->writeBytes((const uint8_t*)username.data(), username.size());
+  os->writeBytes((const uint8_t*)password.data(), password.size());
   os->flush();
   return true;
 }

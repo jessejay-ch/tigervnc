@@ -24,8 +24,6 @@
 
 #include <sys/time.h>
 
-#include <rfb/Rect.h>
-
 #include <FL/Fl_Window.H>
 
 namespace rfb { class ModifiablePixelBuffer; }
@@ -55,12 +53,15 @@ public:
   // Resize the current framebuffer, but retain the contents
   void resizeFramebuffer(int new_w, int new_h);
 
+  // A previous call to writeSetDesktopSize() has completed
+  void setDesktopSizeDone(unsigned result);
+
   // New image for the locally rendered cursor
-  void setCursor(int width, int height, const rfb::Point& hotspot,
+  void setCursor(int width, int height, const core::Point& hotspot,
                  const uint8_t* data);
 
   // Server-provided cursor position
-  void setCursorPos(const rfb::Point& pos);
+  void setCursorPos(const core::Point& pos);
 
   // Change client LED state
   void setLEDState(unsigned int state);
@@ -71,11 +72,11 @@ public:
   void handleClipboardData(const char* data);
 
   // Fl_Window callback methods
-  virtual void show();
-  virtual void draw();
-  virtual void resize(int x, int y, int w, int h);
+  void show() override;
+  void draw() override;
+  void resize(int x, int y, int w, int h) override;
 
-  virtual int handle(int event);
+  int handle(int event) override;
 
   void fullscreen_on();
 
@@ -101,10 +102,9 @@ private:
 
   void maximizeWindow();
 
-  void handleDesktopSize();
   static void handleResizeTimeout(void *data);
   static void reconfigureFullscreen(void *data);
-  void remoteResize(int width, int height);
+  void remoteResize();
 
   void repositionWidgets();
 
@@ -131,7 +131,10 @@ private:
 
   bool firstUpdate;
   bool delayedFullscreen;
-  bool delayedDesktopSize;
+  bool sentDesktopSize;
+
+  bool pendingRemoteResize;
+  struct timeval lastResize;
 
   bool keyboardGrabbed;
   bool mouseGrabbed;

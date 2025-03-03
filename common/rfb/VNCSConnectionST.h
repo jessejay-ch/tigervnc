@@ -29,24 +29,26 @@
 
 #include <map>
 
+#include <core/Timer.h>
+
 #include <rfb/Congestion.h>
 #include <rfb/EncodeManager.h>
 #include <rfb/SConnection.h>
-#include <rfb/Timer.h>
 
 namespace rfb {
   class VNCServerST;
 
   class VNCSConnectionST : private SConnection,
-                           public Timer::Callback {
+                           public core::Timer::Callback {
   public:
-    VNCSConnectionST(VNCServerST* server_, network::Socket* s, bool reverse);
+    VNCSConnectionST(VNCServerST* server_, network::Socket* s, bool reverse,
+                     AccessRights ar);
     virtual ~VNCSConnectionST();
 
     // SConnection methods
 
-    virtual bool accessCheck(AccessRights ar) const;
-    virtual void close(const char* reason);
+    bool accessCheck(AccessRights ar) const override;
+    void close(const char* reason) override;
 
     using SConnection::authenticated;
 
@@ -107,8 +109,8 @@ namespace rfb {
 
     // Change tracking
 
-    void add_changed(const Region& region) { updates.add_changed(region); }
-    void add_copied(const Region& dest, const Point& delta) {
+    void add_changed(const core::Region& region) { updates.add_changed(region); }
+    void add_copied(const core::Region& dest, const core::Point& delta) {
       updates.add_copied(dest, delta);
     }
 
@@ -117,30 +119,33 @@ namespace rfb {
   private:
     // SConnection callbacks
 
-    // These methods are invoked as callbacks from processMsg()
-
-    virtual void authSuccess();
-    virtual void queryConnection(const char* userName);
-    virtual void clientInit(bool shared);
-    virtual void setPixelFormat(const PixelFormat& pf);
-    virtual void pointerEvent(const Point& pos, int buttonMask);
-    virtual void keyEvent(uint32_t keysym, uint32_t keycode, bool down);
-    virtual void framebufferUpdateRequest(const Rect& r, bool incremental);
-    virtual void setDesktopSize(int fb_width, int fb_height,
-                                const ScreenSet& layout);
-    virtual void fence(uint32_t flags, unsigned len, const char data[]);
-    virtual void enableContinuousUpdates(bool enable,
-                                         int x, int y, int w, int h);
-    virtual void handleClipboardRequest();
-    virtual void handleClipboardAnnounce(bool available);
-    virtual void handleClipboardData(const char* data);
-    virtual void supportsLocalCursor();
-    virtual void supportsFence();
-    virtual void supportsContinuousUpdates();
-    virtual void supportsLEDState();
+    // These methods are invoked as callbacks from processMsg(
+    void authSuccess() override;
+    void queryConnection(const char* userName) override;
+    void clientInit(bool shared) override;
+    void setPixelFormat(const PixelFormat& pf) override;
+    void pointerEvent(const core::Point& pos,
+                      uint16_t buttonMask) override;
+    void keyEvent(uint32_t keysym, uint32_t keycode,
+                  bool down) override;
+    void framebufferUpdateRequest(const core::Rect& r,
+                                  bool incremental) override;
+    void setDesktopSize(int fb_width, int fb_height,
+                        const ScreenSet& layout) override;
+    void fence(uint32_t flags, unsigned len,
+               const uint8_t data[]) override;
+    void enableContinuousUpdates(bool enable,
+                                 int x, int y, int w, int h) override;
+    void handleClipboardRequest() override;
+    void handleClipboardAnnounce(bool available) override;
+    void handleClipboardData(const char* data) override;
+    void supportsLocalCursor() override;
+    void supportsFence() override;
+    void supportsContinuousUpdates() override;
+    void supportsLEDState() override;
 
     // Timer callbacks
-    virtual bool handleTimeout(Timer* t);
+    void handleTimeout(core::Timer* t) override;
 
     // Internal methods
 
@@ -174,27 +179,27 @@ namespace rfb {
     bool pendingSyncFence, syncFence;
     uint32_t fenceFlags;
     unsigned fenceDataLen;
-    char *fenceData;
+    uint8_t *fenceData;
 
     Congestion congestion;
-    Timer congestionTimer;
-    Timer losslessTimer;
+    core::Timer congestionTimer;
+    core::Timer losslessTimer;
 
     VNCServerST* server;
     SimpleUpdateTracker updates;
-    Region requested;
+    core::Region requested;
     bool updateRenderedCursor, removeRenderedCursor;
-    Region damagedCursorRegion;
+    core::Region damagedCursorRegion;
     bool continuousUpdates;
-    Region cuRegion;
+    core::Region cuRegion;
     EncodeManager encodeManager;
 
     std::map<uint32_t, uint32_t> pressedKeys;
 
-    Timer idleTimer;
+    core::Timer idleTimer;
 
     time_t pointerEventTime;
-    Point pointerEventPos;
+    core::Point pointerEventPos;
     bool clientHasCursor;
 
     std::string closeReason;

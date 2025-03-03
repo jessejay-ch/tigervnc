@@ -53,16 +53,12 @@
 #include <FL/Fl_Int_Input.H>
 #include <FL/Fl_Choice.H>
 
-using namespace std;
-using namespace rdr;
-using namespace rfb;
-
 std::map<OptionsCallback*, void*> OptionsDialog::callbacks;
 
 static std::set<OptionsDialog *> instances;
 
 OptionsDialog::OptionsDialog()
-  : Fl_Window(580, 420, _("TigerVNC Options"))
+  : Fl_Window(580, 420, _("TigerVNC options"))
 {
   int x, y;
   Fl_Navigation *navigation;
@@ -124,7 +120,7 @@ OptionsDialog::~OptionsDialog()
 
 void OptionsDialog::showDialog(void)
 {
-  static OptionsDialog *dialog = NULL;
+  static OptionsDialog *dialog = nullptr;
 
   if (!dialog)
     dialog = new OptionsDialog();
@@ -163,24 +159,24 @@ void OptionsDialog::loadOptions(void)
   /* Compression */
   autoselectCheckbox->value(autoSelect);
 
-  int encNum = encodingNum(preferredEncoding);
+  int encNum = rfb::encodingNum(preferredEncoding);
 
   switch (encNum) {
-  case encodingTight:
+  case rfb::encodingTight:
     tightButton->setonly();
     break;
-  case encodingZRLE:
+  case rfb::encodingZRLE:
     zrleButton->setonly();
     break;
-  case encodingHextile:
+  case rfb::encodingHextile:
     hextileButton->setonly();
     break;
 #ifdef HAVE_H264
-  case encodingH264:
+  case rfb::encodingH264:
     h264Button->setonly();
     break;
 #endif
-  case encodingRaw:
+  case rfb::encodingRaw:
     rawButton->setonly();
     break;
   }
@@ -216,13 +212,11 @@ void OptionsDialog::loadOptions(void)
 
 #if defined(HAVE_GNUTLS) || defined(HAVE_NETTLE)
   /* Security */
-  Security security(SecurityClient::secTypes);
+  rfb::Security security(rfb::SecurityClient::secTypes);
 
-  list<uint8_t> secTypes;
-  list<uint8_t>::iterator iter;
+  std::list<uint8_t> secTypes;
 
-   list<uint32_t> secTypesExt;
-   list<uint32_t>::iterator iterExt;
+  std::list<uint32_t> secTypesExt;
 
   encNoneCheckbox->value(false);
 #ifdef HAVE_GNUTLS
@@ -238,13 +232,13 @@ void OptionsDialog::loadOptions(void)
   authPlainCheckbox->value(false);
 
   secTypes = security.GetEnabledSecTypes();
-  for (iter = secTypes.begin(); iter != secTypes.end(); ++iter) {
-    switch (*iter) {
-    case secTypeNone:
+  for (uint8_t type : secTypes) {
+    switch (type) {
+    case rfb::secTypeNone:
       encNoneCheckbox->value(true);
       authNoneCheckbox->value(true);
       break;
-    case secTypeVncAuth:
+    case rfb::secTypeVncAuth:
       encNoneCheckbox->value(true);
       authVncCheckbox->value(true);
       break;
@@ -252,51 +246,51 @@ void OptionsDialog::loadOptions(void)
   }
 
   secTypesExt = security.GetEnabledExtSecTypes();
-  for (iterExt = secTypesExt.begin(); iterExt != secTypesExt.end(); ++iterExt) {
-    switch (*iterExt) {
-    case secTypePlain:
+  for (uint32_t type : secTypesExt) {
+    switch (type) {
+    case rfb::secTypePlain:
       encNoneCheckbox->value(true);
       authPlainCheckbox->value(true);
       break;
 #ifdef HAVE_GNUTLS
-    case secTypeTLSNone:
+    case rfb::secTypeTLSNone:
       encTLSCheckbox->value(true);
       authNoneCheckbox->value(true);
       break;
-    case secTypeTLSVnc:
+    case rfb::secTypeTLSVnc:
       encTLSCheckbox->value(true);
       authVncCheckbox->value(true);
       break;
-    case secTypeTLSPlain:
+    case rfb::secTypeTLSPlain:
       encTLSCheckbox->value(true);
       authPlainCheckbox->value(true);
       break;
-    case secTypeX509None:
+    case rfb::secTypeX509None:
       encX509Checkbox->value(true);
       authNoneCheckbox->value(true);
       break;
-    case secTypeX509Vnc:
+    case rfb::secTypeX509Vnc:
       encX509Checkbox->value(true);
       authVncCheckbox->value(true);
       break;
-    case secTypeX509Plain:
+    case rfb::secTypeX509Plain:
       encX509Checkbox->value(true);
       authPlainCheckbox->value(true);
       break;
 #endif
 #ifdef HAVE_NETTLE
-    case secTypeRA2:
-    case secTypeRA256:
+    case rfb::secTypeRA2:
+    case rfb::secTypeRA256:
       encRSAAESCheckbox->value(true);
       authVncCheckbox->value(true);
       authPlainCheckbox->value(true);
       break;
-    case secTypeRA2ne:
-    case secTypeRAne256:
+    case rfb::secTypeRA2ne:
+    case rfb::secTypeRAne256:
       authVncCheckbox->value(true);
       /* fall through */
-    case secTypeDH:
-    case secTypeMSLogonII:
+    case rfb::secTypeDH:
+    case rfb::secTypeMSLogonII:
       encNoneCheckbox->value(true);
       authPlainCheckbox->value(true);
       break;
@@ -306,8 +300,8 @@ void OptionsDialog::loadOptions(void)
   }
 
 #ifdef HAVE_GNUTLS
-  caInput->value(CSecurityTLS::X509CA);
-  crlInput->value(CSecurityTLS::X509CRL);
+  caInput->value(rfb::CSecurityTLS::X509CA);
+  crlInput->value(rfb::CSecurityTLS::X509CRL);
 
   handleX509(encX509Checkbox, this);
 #endif
@@ -331,9 +325,9 @@ void OptionsDialog::loadOptions(void)
   menuKeyChoice->value(0);
 
   menuKeyBuf = menuKey;
-  for (int i = 0; i < getMenuKeySymbolCount(); i++)
-    if (!strcmp(getMenuKeySymbols()[i].name, menuKeyBuf))
-      menuKeyChoice->value(i + 1);
+  for (int idx = 0; idx < getMenuKeySymbolCount(); idx++)
+    if (!strcmp(getMenuKeySymbols()[idx].name, menuKeyBuf))
+      menuKeyChoice->value(idx + 1);
 
   /* Display */
   if (!fullScreen) {
@@ -355,7 +349,14 @@ void OptionsDialog::loadOptions(void)
   /* Misc. */
   sharedCheckbox->value(shared);
   reconnectCheckbox->value(reconnectOnError);
-  dotCursorCheckbox->value(dotWhenNoCursor);
+  alwaysCursorCheckbox->value(alwaysCursor);
+  if (!strcasecmp(cursorType, "system")) {
+    cursorTypeChoice->value(1);
+  } else {
+    // Default
+    cursorTypeChoice->value(0);
+  }
+  handleAlwaysCursor(alwaysCursorCheckbox, this);
 }
 
 
@@ -365,17 +366,17 @@ void OptionsDialog::storeOptions(void)
   autoSelect.setParam(autoselectCheckbox->value());
 
   if (tightButton->value())
-    preferredEncoding.setParam(encodingName(encodingTight));
+    preferredEncoding.setParam(rfb::encodingName(rfb::encodingTight));
   else if (zrleButton->value())
-    preferredEncoding.setParam(encodingName(encodingZRLE));
+    preferredEncoding.setParam(rfb::encodingName(rfb::encodingZRLE));
   else if (hextileButton->value())
-    preferredEncoding.setParam(encodingName(encodingHextile));
+    preferredEncoding.setParam(rfb::encodingName(rfb::encodingHextile));
 #ifdef HAVE_H264
   else if (h264Button->value())
-    preferredEncoding.setParam(encodingName(encodingH264));
+    preferredEncoding.setParam(rfb::encodingName(rfb::encodingH264));
 #endif
   else if (rawButton->value())
-    preferredEncoding.setParam(encodingName(encodingRaw));
+    preferredEncoding.setParam(rfb::encodingName(rfb::encodingRaw));
 
   fullColour.setParam(fullcolorCheckbox->value());
   if (verylowcolorCheckbox->value())
@@ -392,26 +393,26 @@ void OptionsDialog::storeOptions(void)
 
 #if defined(HAVE_GNUTLS) || defined(HAVE_NETTLE)
   /* Security */
-  Security security;
+  rfb::Security security;
 
   /* Process security types which don't use encryption */
   if (encNoneCheckbox->value()) {
     if (authNoneCheckbox->value())
-      security.EnableSecType(secTypeNone);
+      security.EnableSecType(rfb::secTypeNone);
     if (authVncCheckbox->value()) {
-      security.EnableSecType(secTypeVncAuth);
+      security.EnableSecType(rfb::secTypeVncAuth);
 #ifdef HAVE_NETTLE
-      security.EnableSecType(secTypeRA2ne);
-      security.EnableSecType(secTypeRAne256);
+      security.EnableSecType(rfb::secTypeRA2ne);
+      security.EnableSecType(rfb::secTypeRAne256);
 #endif
     }
     if (authPlainCheckbox->value()) {
-      security.EnableSecType(secTypePlain);
+      security.EnableSecType(rfb::secTypePlain);
 #ifdef HAVE_NETTLE
-      security.EnableSecType(secTypeRA2ne);
-      security.EnableSecType(secTypeRAne256);
-      security.EnableSecType(secTypeDH);
-      security.EnableSecType(secTypeMSLogonII);
+      security.EnableSecType(rfb::secTypeRA2ne);
+      security.EnableSecType(rfb::secTypeRAne256);
+      security.EnableSecType(rfb::secTypeDH);
+      security.EnableSecType(rfb::secTypeMSLogonII);
 #endif
     }
   }
@@ -420,34 +421,34 @@ void OptionsDialog::storeOptions(void)
   /* Process security types which use TLS encryption */
   if (encTLSCheckbox->value()) {
     if (authNoneCheckbox->value())
-      security.EnableSecType(secTypeTLSNone);
+      security.EnableSecType(rfb::secTypeTLSNone);
     if (authVncCheckbox->value())
-      security.EnableSecType(secTypeTLSVnc);
+      security.EnableSecType(rfb::secTypeTLSVnc);
     if (authPlainCheckbox->value())
-      security.EnableSecType(secTypeTLSPlain);
+      security.EnableSecType(rfb::secTypeTLSPlain);
   }
 
   /* Process security types which use X509 encryption */
   if (encX509Checkbox->value()) {
     if (authNoneCheckbox->value())
-      security.EnableSecType(secTypeX509None);
+      security.EnableSecType(rfb::secTypeX509None);
     if (authVncCheckbox->value())
-      security.EnableSecType(secTypeX509Vnc);
+      security.EnableSecType(rfb::secTypeX509Vnc);
     if (authPlainCheckbox->value())
-      security.EnableSecType(secTypeX509Plain);
+      security.EnableSecType(rfb::secTypeX509Plain);
   }
 
-  CSecurityTLS::X509CA.setParam(caInput->value());
-  CSecurityTLS::X509CRL.setParam(crlInput->value());
+  rfb::CSecurityTLS::X509CA.setParam(caInput->value());
+  rfb::CSecurityTLS::X509CRL.setParam(crlInput->value());
 #endif
 
 #ifdef HAVE_NETTLE
   if (encRSAAESCheckbox->value()) {
-    security.EnableSecType(secTypeRA2);
-    security.EnableSecType(secTypeRA256);
+    security.EnableSecType(rfb::secTypeRA2);
+    security.EnableSecType(rfb::secTypeRA256);
   }
 #endif
-  SecurityClient::secTypes.setParam(security.ToString());
+  rfb::SecurityClient::secTypes.setParam(security.ToString());
 #endif
 
   /* Input */
@@ -489,7 +490,14 @@ void OptionsDialog::storeOptions(void)
   /* Misc. */
   shared.setParam(sharedCheckbox->value());
   reconnectOnError.setParam(reconnectCheckbox->value());
-  dotWhenNoCursor.setParam(dotCursorCheckbox->value());
+  alwaysCursor.setParam(alwaysCursorCheckbox->value());
+
+  if (cursorTypeChoice->value() == 1) {
+    cursorType.setParam("System");
+  } else {
+    // Default
+    cursorType.setParam("Dot");
+  }
 
   std::map<OptionsCallback*, void*>::const_iterator iter;
 
@@ -578,7 +586,7 @@ void OptionsDialog::createCompressionPage(int tx, int ty, int tw, int th)
 
   encodingGroup->end();
   /* Needed for resize to work sanely */
-  encodingGroup->resizable(NULL);
+  encodingGroup->resizable(nullptr);
   encodingGroup->size(encodingGroup->w(), ty - encodingGroup->y());
   col1_ty = ty;
 
@@ -630,7 +638,7 @@ void OptionsDialog::createCompressionPage(int tx, int ty, int tw, int th)
 
   colorlevelGroup->end();
   /* Needed for resize to work sanely */
-  colorlevelGroup->resizable(NULL);
+  colorlevelGroup->resizable(nullptr);
   colorlevelGroup->size(colorlevelGroup->w(),
                         ty - colorlevelGroup->y());
   col2_ty = ty;
@@ -746,7 +754,7 @@ void OptionsDialog::createSecurityPage(int tx, int ty, int tw, int th)
 
   encryptionGroup->end();
   /* Needed for resize to work sanely */
-  encryptionGroup->resizable(NULL);
+  encryptionGroup->resizable(nullptr);
   encryptionGroup->size(encryptionGroup->w(),
                         ty - encryptionGroup->y());
 
@@ -788,7 +796,7 @@ void OptionsDialog::createSecurityPage(int tx, int ty, int tw, int th)
 
   authenticationGroup->end();
   /* Needed for resize to work sanely */
-  authenticationGroup->resizable(NULL);
+  authenticationGroup->resizable(nullptr);
   authenticationGroup->size(authenticationGroup->w(),
                             ty - authenticationGroup->y());
 
@@ -797,6 +805,11 @@ void OptionsDialog::createSecurityPage(int tx, int ty, int tw, int th)
   ty += INNER_MARGIN;
 
   group->end();
+#else
+  (void)tx;
+  (void)ty;
+  (void)tw;
+  (void)th;
 #endif
 }
 
@@ -838,17 +851,29 @@ void OptionsDialog::createInputPage(int tx, int ty, int tw, int th)
                                                      _("Emulate middle mouse button")));
     ty += CHECK_HEIGHT + TIGHT_MARGIN;
 
-    dotCursorCheckbox = new Fl_Check_Button(LBLRIGHT(tx, ty,
-                                                    CHECK_MIN_WIDTH,
-                                                    CHECK_HEIGHT,
-                                                    _("Show dot when no cursor")));
+    alwaysCursorCheckbox = new Fl_Check_Button(LBLRIGHT(tx, ty,
+                                                       CHECK_MIN_WIDTH,
+                                                       CHECK_HEIGHT,
+                                                       _("Show local cursor when not provided by server")));
+    alwaysCursorCheckbox->callback(handleAlwaysCursor, this);
     ty += CHECK_HEIGHT + TIGHT_MARGIN;
+
+    /* Cursor type */
+    cursorTypeChoice = new Fl_Choice(LBLLEFT(tx, ty, 150, CHOICE_HEIGHT, _("Cursor type")));
+
+    fltk_menu_add(cursorTypeChoice, _("Dot"), 0, nullptr, nullptr, 0);
+    fltk_menu_add(cursorTypeChoice, _("System"), 0, nullptr, nullptr, 0);
+
+    fltk_adjust_choice(cursorTypeChoice);
+
+    ty += CHOICE_HEIGHT + TIGHT_MARGIN;
+
   }
   ty -= TIGHT_MARGIN;
 
   mouseGroup->end();
   /* Needed for resize to work sanely */
-  mouseGroup->resizable(NULL);
+  mouseGroup->resizable(nullptr);
   mouseGroup->size(mouseGroup->w(), ty - mouseGroup->y());
 
   /* Back to normal */
@@ -874,9 +899,11 @@ void OptionsDialog::createInputPage(int tx, int ty, int tw, int th)
 
     menuKeyChoice = new Fl_Choice(LBLLEFT(tx, ty, 150, CHOICE_HEIGHT, _("Menu key")));
 
-    fltk_menu_add(menuKeyChoice, _("None"), 0, NULL, (void*)0, FL_MENU_DIVIDER);
-    for (int i = 0; i < getMenuKeySymbolCount(); i++)
-      fltk_menu_add(menuKeyChoice, getMenuKeySymbols()[i].name, 0, NULL, 0, 0);
+    fltk_menu_add(menuKeyChoice, _("None"), 0, nullptr, nullptr, FL_MENU_DIVIDER);
+    for (int idx = 0; idx < getMenuKeySymbolCount(); idx++)
+      fltk_menu_add(menuKeyChoice, getMenuKeySymbols()[idx].name, 0, nullptr, nullptr, 0);
+
+    fltk_adjust_choice(menuKeyChoice);
 
     ty += CHOICE_HEIGHT + TIGHT_MARGIN;
   }
@@ -884,7 +911,7 @@ void OptionsDialog::createInputPage(int tx, int ty, int tw, int th)
 
   keyboardGroup->end();
   /* Needed for resize to work sanely */
-  keyboardGroup->resizable(NULL);
+  keyboardGroup->resizable(nullptr);
   keyboardGroup->size(keyboardGroup->w(), ty - keyboardGroup->y());
 
   /* Back to normal */
@@ -936,7 +963,7 @@ void OptionsDialog::createInputPage(int tx, int ty, int tw, int th)
 
   clipboardGroup->end();
   /* Needed for resize to work sanely */
-  clipboardGroup->resizable(NULL);
+  clipboardGroup->resizable(nullptr);
   clipboardGroup->size(clipboardGroup->w(), ty - clipboardGroup->y());
 
   /* Back to normal */
@@ -1014,7 +1041,7 @@ void OptionsDialog::createDisplayPage(int tx, int ty, int tw, int th)
 
   displayModeGroup->end();
   /* Needed for resize to work sanely */
-  displayModeGroup->resizable(NULL);
+  displayModeGroup->resizable(nullptr);
   displayModeGroup->size(displayModeGroup->w(),
                          ty - displayModeGroup->y());
 
@@ -1183,4 +1210,15 @@ void OptionsDialog::handleScreenConfigTimeout(void *data)
     assert(self);
 
     self->monitorArrangement->value(fullScreenSelectedMonitors.getParam());
+}
+
+void OptionsDialog::handleAlwaysCursor(Fl_Widget* /*widget*/, void *data)
+{
+  OptionsDialog *dialog = (OptionsDialog*)data;
+
+  if (dialog->alwaysCursorCheckbox->value()) {
+    dialog->cursorTypeChoice->activate();
+  } else {
+    dialog->cursorTypeChoice->deactivate();
+  }
 }

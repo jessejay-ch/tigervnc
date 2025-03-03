@@ -30,19 +30,23 @@ namespace rfb {
     ZRLEEncoder(SConnection* conn);
     virtual ~ZRLEEncoder();
 
-    virtual bool isSupported();
+    bool isSupported() override;
 
-    virtual void writeRect(const PixelBuffer* pb, const Palette& palette);
-    virtual void writeSolidRect(int width, int height,
-                                const PixelFormat& pf,
-                                const uint8_t* colour);
+    void setCompressLevel(int level) override;
+
+    void writeRect(const PixelBuffer* pb,
+                   const Palette& palette) override;
+    void writeSolidRect(int width, int height, const PixelFormat& pf,
+                        const uint8_t* colour) override;
 
   protected:
-    void writePaletteTile(const Rect& tile, const PixelBuffer* pb,
+    void writePaletteTile(const core::Rect& tile,
+                          const PixelBuffer* pb,
                           const Palette& palette);
-    void writePaletteRLETile(const Rect& tile, const PixelBuffer* pb,
+    void writePaletteRLETile(const core::Rect& tile,
+                             const PixelBuffer* pb,
                              const Palette& palette);
-    void writeRawTile(const Rect& tile, const PixelBuffer* pb);
+    void writeRawTile(const core::Rect& tile, const PixelBuffer* pb);
 
     void writePalette(const PixelFormat& pf, const Palette& palette);
 
